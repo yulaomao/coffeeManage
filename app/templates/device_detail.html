@@ -259,6 +259,20 @@ let menuVer = null; // for If-Match
 const base = {'X-Role':'admin','Content-Type':'application/json'}
 const hdr = () => (menuVer ? {...base, 'If-Match': String(menuVer)} : base)
 
+// Recipes cache for selecting recipe on items
+let recipeListCache = []
+function recipeOptionLabel(r){ try{ const sj=JSON.parse(r.schema_json||'{}'); const name=(sj.name_i18n||{}).zh || r.name || r.id; return `${r.id} - ${name}` }catch{return r.id} }
+async function loadRecipeOptions(){
+  try{
+    const j = await fetch(`/api/v1/recipes?enabled=enabled&page=1&page_size=500`,{headers:base}).then(r=>r.json())
+    const d=j.data||{}; recipeListCache = d.items||[]
+    let dl=document.getElementById('recipeList'); if(!dl){
+      document.body.insertAdjacentHTML('beforeend',`<datalist id="recipeList"></datalist>`) ; dl=document.getElementById('recipeList')
+    }
+    dl.innerHTML = recipeListCache.map(r=>`<option value="${r.id}">${recipeOptionLabel(r)}</option>`).join('')
+  }catch(e){ recipeListCache=[] }
+}
+
 function refreshOverview(){
   fetch(`/api/v1/devices/${deviceId}/summary`,{headers:base}).then(r=>r.json()).then(x=>{
     const d = x.data||{}; const dv = d.device||{};
@@ -509,7 +523,9 @@ function dndReorderCats(from, to){ const arr=[...(window.menuData.categories||[]
 function addItem(catId){
   const name = prompt('商品中文名','拿铁'); if(name==null) return;
   const price = prompt('价格(分)','1800');
-  fetch(`/api/v1/devices/${deviceId}/menu/items`,{method:'POST',headers:hdr(),body:JSON.stringify({cat_id:catId,recipe_id:'r-1',name_i18n:{zh:name},price_cents_override:price?Number(price):null})})
+  if(!recipeListCache.length){ loadRecipeOptions() }
+  const rid = prompt('配方ID（必须为已存在的配方）', recipeListCache[0]? recipeListCache[0].id : '') ; if(!rid) return;
+  fetch(`/api/v1/devices/${deviceId}/menu/items`,{method:'POST',headers:hdr(),body:JSON.stringify({cat_id:catId,recipe_id:String(rid),name_i18n:{zh:name},price_cents_override:price?Number(price):null})})
     .then(handleWrite).then(()=>renderItems(catId))
 }
 function saveItem(itemId, btn){
@@ -549,6 +565,7 @@ document.body.insertAdjacentHTML('beforeend',`
   </div>
   <div class="offcanvas-body">
     <div class="mb-2"><label class="form-label">名称(zh)</label><input id="edName" class="form-control"></div>
+  <div class="mb-2"><label class="form-label">配方ID</label><input id="edRecipeId" class="form-control" list="recipeList" placeholder="选择/输入已存在的配方ID"></div>
     <div class="mb-2"><label class="form-label">图片URL</label><input id="edImg" class="form-control"></div>
     <div class="mb-2"><label class="form-label">价格(分，留空继承)</label><input id="edPrice" class="form-control" placeholder="1800"></div>
     <div class="mb-2"><label class="form-label">角标(逗号分隔)</label><input id="edBadges" class="form-control" placeholder="新品,热销"></div>
@@ -560,8 +577,8 @@ document.body.insertAdjacentHTML('beforeend',`
   </div>
 </div>`)
 let edItemId=null; let itemEditor=null
-function openItemEditor(id){ edItemId=String(id); const cat=currentCat(); const it=(cat.items||[]).find(x=>String(x.id)===edItemId)||{}; const nm=(safeJSON(it.name_i18n_json).zh)||''; const sch=(()=>{const x=safeJSON(it.schedule_json); return (x.ranges||[]).map(r=>r.join('-')).join(',')})(); document.getElementById('edName').value=nm; document.getElementById('edImg').value=it.image_url||''; document.getElementById('edPrice').value=it.price_cents_override||''; document.getElementById('edBadges').value=(it.badges_csv||''); document.getElementById('edTags').value=(it.tags_csv||''); document.getElementById('edSchedule').value=sch; if(!itemEditor){ itemEditor = new bootstrap.Offcanvas('#itemEditor') } itemEditor.show() }
-function saveItemFromEditor(){ const body={}; const name=document.getElementById('edName').value.trim(); if(name!=='') body.name_i18n={zh:name}; const img=document.getElementById('edImg').value.trim(); body.image_url=img; const price=document.getElementById('edPrice').value.trim(); body.price_cents_override = price? Number(price): null; const badges=document.getElementById('edBadges').value.trim(); body.badges = badges? badges.split(',').map(x=>x.trim()).filter(Boolean): []; const tags=document.getElementById('edTags').value.trim(); body.tags = tags? tags.split(',').map(x=>x.trim()).filter(Boolean): []; const s=document.getElementById('edSchedule').value.trim(); body.schedule = s? {ranges: s.split(',').map(x=>x.trim()).filter(Boolean).map(x=>x.split('-'))}: {}; fetch(`/api/v1/devices/${deviceId}/menu/items/${edItemId}`,{method:'PUT',headers:hdr(),body:JSON.stringify(body)}).then(handleWrite).then(()=>{ itemEditor.hide(); renderItems(window.currentCatId) }) }
+function openItemEditor(id){ edItemId=String(id); const cat=currentCat(); const it=(cat.items||[]).find(x=>String(x.id)===edItemId)||{}; if(!recipeListCache.length){ loadRecipeOptions() } const nm=(safeJSON(it.name_i18n_json).zh)||''; const sch=(()=>{const x=safeJSON(it.schedule_json); return (x.ranges||[]).map(r=>r.join('-')).join(',')})(); document.getElementById('edName').value=nm; document.getElementById('edRecipeId').value=it.recipe_id||''; document.getElementById('edImg').value=it.image_url||''; document.getElementById('edPrice').value=it.price_cents_override||''; document.getElementById('edBadges').value=(it.badges_csv||''); document.getElementById('edTags').value=(it.tags_csv||''); document.getElementById('edSchedule').value=sch; if(!itemEditor){ itemEditor = new bootstrap.Offcanvas('#itemEditor') } itemEditor.show() }
+function saveItemFromEditor(){ const body={}; const name=document.getElementById('edName').value.trim(); if(name!=='') body.name_i18n={zh:name}; const rid=document.getElementById('edRecipeId').value.trim(); if(rid!=='') body.recipe_id=rid; const img=document.getElementById('edImg').value.trim(); body.image_url=img; const price=document.getElementById('edPrice').value.trim(); body.price_cents_override = price? Number(price): null; const badges=document.getElementById('edBadges').value.trim(); body.badges = badges? badges.split(',').map(x=>x.trim()).filter(Boolean): []; const tags=document.getElementById('edTags').value.trim(); body.tags = tags? tags.split(',').map(x=>x.trim()).filter(Boolean): []; const s=document.getElementById('edSchedule').value.trim(); body.schedule = s? {ranges: s.split(',').map(x=>x.trim()).filter(Boolean).map(x=>x.split('-'))}: {}; fetch(`/api/v1/devices/${deviceId}/menu/items/${edItemId}`,{method:'PUT',headers:hdr(),body:JSON.stringify(body)}).then(handleWrite).then(()=>{ itemEditor.hide(); renderItems(window.currentCatId) }) }
 function delItem(itemId){
   fetch(`/api/v1/devices/${deviceId}/menu/items/${itemId}`,{method:'DELETE',headers:hdr()})
     .then(handleWrite).then(()=>renderItems(window.currentCatId))
@@ -646,6 +663,7 @@ function retryCmd(type, enc){ try{ const payload = JSON.parse(decodeURIComponent
 refreshOverview();
 loadOrders(1);
 loadMenu();
+loadRecipeOptions();
 // Auto refresh bins when its tab becomes active
 document.querySelectorAll('#devTabs a[data-bs-toggle="tab"]').forEach(el=>{
   el.addEventListener('shown.bs.tab', (e)=>{

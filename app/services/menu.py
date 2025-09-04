@@ -4,7 +4,7 @@ from ..utils.extensions import redis_cli, jget, jset
 from ..utils.keys import (
     k_menu_meta, k_menu_cats, k_menu_cat, k_menu_cat_items,
     k_menu_item, k_menu_available, k_menu_seq_cat, k_menu_seq_item,
-    ts, k_audit_stream
+    ts, k_audit_stream, k_dict_recipe,
 )
 from ..utils.rate_limit import check_rate, RateLimited
 from flask import current_app
@@ -163,6 +163,8 @@ class MenuService:
             raise ValueError("MENU_CATEGORY_NOT_FOUND")
         if not recipe_id:
             raise ValueError("INVALID_ARGUMENT:recipe_id")
+        if not r.exists(k_dict_recipe(recipe_id)):
+            raise ValueError("RECIPE_NOT_FOUND")
         item_id = MenuService._next_item_id(r, device_id)
         so = int(payload.get("sort_order") or (r.zcard(k_menu_cat_items(device_id, cat_id)) + 1))
         h = {
@@ -204,6 +206,14 @@ class MenuService:
             r.zadd(k_menu_cat_items(device_id, new_cat), {item_id: so})
             mapping["cat_id"] = new_cat
             mapping["sort_order"] = str(so)
+        # optional change: recipe_id
+        if "recipe_id" in payload and payload["recipe_id"] != h.get("recipe_id"):
+            new_rid = str(payload["recipe_id"])
+            if not new_rid:
+                raise ValueError("INVALID_ARGUMENT:recipe_id")
+            if not r.exists(k_dict_recipe(new_rid)):
+                raise ValueError("RECIPE_NOT_FOUND")
+            mapping["recipe_id"] = new_rid
         for f in ["name_i18n", "options_schema", "schedule"]:
             if f in payload:
                 mapping[f"{f}_json"] = jset(payload.get(f) or {})

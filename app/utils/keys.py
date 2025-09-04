@@ -72,6 +72,9 @@ def k_dict_recipe(recipe_id: str) -> str:
 def k_dict_recipe_enabled() -> str:
     return "cm:dict:recipe:enabled"
 
+def k_dict_recipe_all() -> str:
+    return "cm:dict:recipe:all"
+
 def k_dict_material(code: str) -> str:
     return f"cm:dict:material:{code}"
 
@@ -94,3 +97,10 @@ def k_batch(batch_id: str) -> str:
 
 def k_batch_cmds(batch_id: str) -> str:
     return f"cm:batch:{batch_id}:cmds"
+
+# Recipe device active set and packages
+def k_dev_recipes_active(device_id: str) -> str:
+    return f"cm:dev:{device_id}:recipes:active"
+
+def k_recipe_pkg(recipe_id: str, version: str) -> str:
+    return f"cm:pkg:recipe:{recipe_id}:{version}"

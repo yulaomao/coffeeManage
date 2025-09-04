@@ -370,22 +370,77 @@ def materials_export():
     return Response(content, mimetype=mime, headers={"Content-Disposition": f"attachment; filename=materials.{('csv' if fmt=='csv' else 'json')}"})
 
 # Recipes
+@api_v1_bp.get("/recipes")
+@require_role(["admin", "ops", "viewer"]) 
+def recipes_list():
+    query = request.args.get('query')
+    enabled = request.args.get('enabled')
+    tags = request.args.get('tags')
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 20))
+    return ok(RecipeService.list(query=query, enabled=enabled, tags=tags, page=page, page_size=page_size))
+
+@api_v1_bp.get("/recipes/<recipe_id>")
+@require_role(["admin", "ops", "viewer"]) 
+def recipe_get(recipe_id):
+    return ok(RecipeService.get(recipe_id))
+
 @api_v1_bp.post("/recipes")
 @require_role(["admin", "ops"]) 
 def recipe_upsert():
     body = request.json or {}
     rid = body.get("id")
-    return ok(RecipeService.upsert(rid, body))
+    try:
+        return ok(RecipeService.upsert(rid, body))
+    except ValueError as e:
+        return err(str(e), 400)
 
-@api_v1_bp.get("/recipes/enabled")
+@api_v1_bp.delete("/recipes/<recipe_id>")
+@require_role(["admin", "ops"]) 
+def recipe_delete(recipe_id):
+    force = request.args.get('force','false').lower() in ('1','true','yes')
+    try:
+        return ok(RecipeService.delete(recipe_id, force=force))
+    except ValueError as e:
+        return err(str(e), 400)
+
+@api_v1_bp.get("/recipes/<recipe_id>/usage")
 @require_role(["admin", "ops", "viewer"]) 
-def recipe_enabled():
-    return ok(RecipeService.list_enabled())
+def recipe_usage(recipe_id):
+    return ok(RecipeService.usage(recipe_id))
 
 @api_v1_bp.post("/recipes/<recipe_id>/publish")
 @require_role(["admin", "ops"]) 
 def recipe_publish(recipe_id):
     return ok(RecipeService.publish(recipe_id))
+
+@api_v1_bp.post("/recipes/<recipe_id>/dispatch")
+@require_role(["admin", "ops"]) 
+def recipe_dispatch(recipe_id):
+    body = request.json or {}
+    device_ids = body.get('device_ids') or []
+    return ok(RecipeService.dispatch(recipe_id, device_ids))
+
+@api_v1_bp.post("/recipes/import")
+@require_role(["admin", "ops"]) 
+def recipes_import():
+    body = request.json or {}
+    strategy = body.get('strategy','merge')
+    payload = body.get('payload') or []
+    dry_run = bool(body.get('dry_run', False))
+    try:
+        return ok(RecipeService.import_payload(strategy, payload, dry_run=dry_run))
+    except ValueError as e:
+        return err(str(e), 400)
+
+@api_v1_bp.get("/recipes/export")
+@require_role(["admin", "ops", "viewer"]) 
+def recipes_export():
+    ids = request.args.get('ids')
+    ids_list = [i.strip() for i in ids.split(',')] if ids else None
+    content, mime = RecipeService.export(ids_list)
+    from flask import Response
+    return Response(content, mimetype=mime, headers={"Content-Disposition": "attachment; filename=recipes.json"})
 
 # Batches
 @api_v1_bp.post("/commands/dispatch")

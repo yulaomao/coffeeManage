@@ -1,14 +1,203 @@
 {% extends 'layout.html' %}
 {% block content %}
-<h3>配方管理</h3>
-<div class="d-flex mb-2">
-  <button class="btn btn-sm btn-success" onclick="addRecipe()">新增</button>
+<div class="d-flex align-items-center gap-2 mb-2">
+  <div class="input-group input-group-sm" style="max-width:520px">
+    <span class="input-group-text">搜索</span>
+    <input id="q" class="form-control" placeholder="按 ID/名称/标签">
+    <span class="input-group-text">启用</span>
+    <select id="fltEnabled" class="form-select">
+      <option value="">全部</option>
+      <option value="enabled">已启用</option>
+      <option value="disabled">未启用</option>
+    </select>
+    <span class="input-group-text">标签</span>
+    <input id="fltTags" class="form-control" placeholder="tag1,tag2">
+    <button class="btn btn-outline-secondary" onclick="load(1)">查询</button>
+  </div>
+  <div class="ms-auto d-flex gap-2">
+    <button class="btn btn-sm btn-success" onclick="openEditor()">新增</button>
+    <label class="btn btn-sm btn-outline-secondary mb-0">导入
+      <input id="impFile" type="file" accept="application/json" hidden onchange="importRecipes()">
+    </label>
+    <button class="btn btn-sm btn-outline-secondary" onclick="exportRecipes()">导出</button>
+    <div id="batchBar" class="btn-group btn-group-sm d-none">
+      <button class="btn btn-outline-primary" onclick="batchEnable(true)">批量启用</button>
+      <button class="btn btn-outline-secondary" onclick="batchEnable(false)">批量禁用</button>
+      <button class="btn btn-outline-success" onclick="batchPublish()">批量发布包</button>
+      <button class="btn btn-outline-dark" onclick="batchDispatch()">批量下发</button>
+    </div>
+  </div>
 </div>
-<ul id="list" class="list-group"></ul>
+
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th style="width:28px"><input type="checkbox" id="selAll" onclick="toggleAll(this.checked)"></th>
+        <th>配方ID</th><th>名称</th><th>启用</th><th>默认价格</th><th>菜单引用</th><th>设备启用</th><th>更新时间</th><th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="tb"></tbody>
+  </table>
+</div>
+<div class="d-flex justify-content-between align-items-center">
+  <div class="small text-muted" id="pgInfo">-</div>
+  <div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="prev()">上一页</button>
+    <span id="pg" class="mx-2">1/1</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="next()">下一页</button>
+  </div>
+  <div>
+    <select id="ps" class="form-select form-select-sm" style="width:auto" onchange="load(1)">
+      <option>20</option><option selected>50</option><option>100</option>
+    </select>
+  </div>
+</div>
+
 <script>
-const hdr={'X-Role':'admin','Content-Type':'application/json'}
-function load(){fetch('/api/v1/recipes/enabled',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(id=>`<li class='list-group-item'>${id}</li>`).join('')})}
-function addRecipe(){const id=prompt('配方ID','r-1'); if(!id) return; fetch('/api/v1/recipes',{method:'POST',headers:hdr,body:JSON.stringify({id,name:id,enabled:true})}).then(load)}
-load()
+const HDR={'X-Role':'admin','Content-Type':'application/json'}
+let curPage=1, total=0, selected=new Set()
+// materials cache for ingredient picker
+let materials=[], materialsMap={}
+async function loadMaterials(){ try{ const j=await fetch('/api/v1/materials',{headers:HDR}).then(r=>r.json()); const arr=Array.isArray(j.data)? j.data : ((j.data&&j.data.items)||[]); materials=arr; materialsMap={}; for(const m of arr){ if(m&&m.code){ materialsMap[m.code]=m } } const dl=document.getElementById('materialsList'); if(dl){ dl.innerHTML=arr.map(m=>`<option value="${m.code}">${(JSON.parse(m.name_i18n_json||'{}').zh||m.code)} (${m.unit||''})</option>`).join('') } }catch(e){} }
+function toggleAll(on){ document.querySelectorAll('#tb input[type=checkbox]').forEach(c=>{ c.checked=on; on?selected.add(c.value):selected.delete(c.value) }); updateBatchBar() }
+function updateBatchBar(){ document.getElementById('batchBar').classList.toggle('d-none', selected.size===0) }
+function fmtTs(v){ if(!v) return ''; try{ const n=Number(v); if(!n) return ''; return new Date(n*1000).toLocaleString() }catch{return ''} }
+async function load(page){ curPage=page||1; const q=document.getElementById('q').value.trim(); const en=document.getElementById('fltEnabled').value; const tags=document.getElementById('fltTags').value.trim(); const ps=Number(document.getElementById('ps').value||50); const url=`/api/v1/recipes?query=${encodeURIComponent(q)}&enabled=${encodeURIComponent(en)}&tags=${encodeURIComponent(tags)}&page=${curPage}&page_size=${ps}`; const j=await fetch(url,{headers:HDR}).then(r=>r.json()); const d=j.data||{items:[],total:0,page:1,page_size:ps}; const tb=document.getElementById('tb'); tb.innerHTML=''; selected.clear(); for(const h of d.items){ const id=h.id; const name=h.name||id; const enabled=(h.enabled==='1'); const price=h.default_price_cents||''; const refs=h.menu_refs_count||0; const devs=h.devices_active_count||0; const tr=document.createElement('tr'); tr.innerHTML = `
+  <td><input type="checkbox" value="${id}" onclick="this.checked?selected.add('${id}'):selected.delete('${id}'); updateBatchBar()"></td>
+  <td>${id}</td>
+  <td>${name}</td>
+  <td>${enabled?'<span class="badge text-bg-success">启用</span>':'<span class="badge text-bg-secondary">禁用</span>'}</td>
+  <td>${price}</td>
+  <td><a href="javascript:void(0)" onclick="showUsage('${id}')">${refs}</a></td>
+  <td>${devs}</td>
+  <td>${fmtTs(h.updated_ts)}</td>
+  <td>
+    <div class="btn-group btn-group-sm">
+      <button class="btn btn-outline-primary" onclick="openEditor('${id}')">编辑</button>
+      <button class="btn btn-outline-secondary" onclick="copyRecipe('${id}')">复制</button>
+      <button class="btn btn-outline-success" onclick="publishOne('${id}')">发布</button>
+      <button class="btn btn-outline-dark" onclick="dispatchOne('${id}')">下发</button>
+      <button class="btn btn-outline-danger" onclick="delRecipe('${id}')">删除</button>
+    </div>
+  </td>`
+  tb.appendChild(tr)
+ }
+ total=d.total||0; const pages=Math.max(1, Math.ceil(total/ps)); document.getElementById('pg').innerText=`${d.page}/${pages}`; document.getElementById('pgInfo').innerText=`共 ${total} 条`
+}
+function prev(){ if(curPage>1) load(curPage-1) } function next(){ const ps=Number(document.getElementById('ps').value||50); const pages=Math.max(1, Math.ceil(total/ps)); if(curPage<pages) load(curPage+1) }
+
+// Usage modal
+document.body.insertAdjacentHTML('beforeend',`
+<div class="modal" id="usageModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">引用详情</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body"><div class="row g-2">
+    <div class="col-12 col-lg-6"><div class="card"><div class="card-body"><div class="text-secondary">菜单引用</div><ul id="uMenu" class="list-group list-group-flush"></ul></div></div></div>
+    <div class="col-12 col-lg-6"><div class="card"><div class="card-body"><div class="text-secondary">设备启用</div><ul id="uDevs" class="list-group list-group-flush"></ul></div></div></div>
+  </div></div>
+  <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
+</div></div></div>`)
+let usageModal=null
+async function showUsage(id){ const j=await fetch(`/api/v1/recipes/${id}/usage`,{headers:HDR}).then(r=>r.json()); const d=j.data||{menu_refs:[],devices_active:[]}; const um=document.getElementById('uMenu'); um.innerHTML=(d.menu_refs||[]).map(x=>`<li class='list-group-item d-flex justify-content-between'><span>${x.device_id} - #${x.item_id} (${x.name||''})</span><a class='btn btn-sm btn-outline-primary' target='_blank' href='/devices/${x.device_id}'>设备</a></li>`).join('')||'<li class="list-group-item">无</li>'; const ud=document.getElementById('uDevs'); ud.innerHTML=(d.devices_active||[]).map(dev=>`<li class='list-group-item'>${dev}</li>`).join('')||'<li class="list-group-item">无</li>'; if(!usageModal){ usageModal=new bootstrap.Modal('#usageModal') } usageModal.show() }
+
+// Offcanvas editor
+document.body.insertAdjacentHTML('beforeend',`
+<div class="offcanvas offcanvas-end" tabindex="-1" id="recEditor"><div class="offcanvas-header"><h5 class="offcanvas-title">编辑配方</h5><button class="btn-close" data-bs-dismiss="offcanvas"></button></div>
+<div class="offcanvas-body">
+  <datalist id="materialsList"></datalist>
+  <ul class="nav nav-tabs mb-2">
+    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#r-basic">基础</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#r-ings">配料</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#r-steps">步骤</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#r-opts">参数</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#r-preview">预览</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#r-pub">发布与下发</a></li>
+  </ul>
+  <div class="tab-content">
+    <div class="tab-pane fade show active" id="r-basic">
+      <div class="row g-2">
+        <div class="col-12 col-md-4"><label class="form-label">配方ID</label><input id="rId" class="form-control"></div>
+        <div class="col-12 col-md-4"><label class="form-label">名称(zh)</label><input id="rNameZh" class="form-control"></div>
+        <div class="col-12 col-md-4"><label class="form-label">名称(en)</label><input id="rNameEn" class="form-control"></div>
+        <div class="col-12 col-md-4"><label class="form-label">标签(,分隔)</label><input id="rTags" class="form-control"></div>
+        <div class="col-12 col-md-4"><label class="form-label">默认价格(分)</label><input id="rPrice" class="form-control"></div>
+        <div class="col-12 col-md-4"><label class="form-label">启用</label><div><input id="rEnabled" type="checkbox" class="form-check-input"></div></div>
+        <div class="col-12 col-md-4"><label class="form-label">图片URL</label><input id="rImg" class="form-control"></div>
+      </div>
+    </div>
+    <div class="tab-pane fade" id="r-ings">
+      <div class="d-flex justify-content-between mb-2"><div class="text-secondary">配料</div><button class="btn btn-sm btn-outline-secondary" onclick="addIng()">添加</button></div>
+      <div id="ings"></div>
+    </div>
+    <div class="tab-pane fade" id="r-steps">
+      <div class="d-flex justify-content-between mb-2"><div class="text-secondary">步骤</div><button class="btn btn-sm btn-outline-secondary" onclick="addStep()">添加</button></div>
+      <div id="steps"></div>
+      <div class="small text-muted mt-2" id="stepsSummary"></div>
+    </div>
+    <div class="tab-pane fade" id="r-opts">
+      <label class="form-label">选项 Schema(JSON)</label>
+      <textarea id="rOpts" class="form-control" rows="6" placeholder='{"sugar_levels":["无糖","标准"],"extra_shots":{"max":2,"add_price_cents":500}}'></textarea>
+      <div class="row g-2 mt-2">
+        <div class="col-6"><label class="form-label">出杯量(ml)</label><input id="rYield" class="form-control"></div>
+        <div class="col-6"><label class="form-label">过敏原(,分隔)</label><input id="rAllergens" class="form-control"></div>
+      </div>
+    </div>
+    <div class="tab-pane fade" id="r-preview">
+      <div id="previewArea" class="small text-muted">配置后显示预检（库存、过敏原、预计成本、可售门控等）</div>
+    </div>
+    <div class="tab-pane fade" id="r-pub">
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-success" onclick="publishCurrent()">发布包</button>
+        <input id="dispatchDevs" class="form-control form-control-sm" placeholder="设备ID,逗号分隔">
+        <button class="btn btn-sm btn-dark" onclick="dispatchCurrent()">下发到设备</button>
+        <a class="btn btn-sm btn-outline-dark" href="/dispatch" target="_blank">前往下发中心</a>
+      </div>
+    </div>
+  </div>
+  <div class="text-end mt-3"><button class="btn btn-primary" onclick="saveRecipe()">保存</button></div>
+</div></div>`)
+let editor=null, editingId=null
+function openEditor(id){ editingId=id||''; if(!editor){ editor=new bootstrap.Offcanvas('#recEditor') } editor.show(); if(!materials.length){ loadMaterials() } if(id){ loadOne(id) } else { resetEditor() } }
+function resetEditor(){ ['rId','rNameZh','rNameEn','rTags','rPrice','rImg','rOpts','rYield','rAllergens'].forEach(i=>document.getElementById(i).value=''); document.getElementById('rEnabled').checked=true; document.getElementById('ings').innerHTML=''; document.getElementById('steps').innerHTML=''; document.getElementById('stepsSummary').innerText='' }
+function safeJson(s){ if(!s) return {}; try{ return JSON.parse(s) }catch{ return {} } }
+async function loadOne(id){ const j=await fetch(`/api/v1/recipes/${id}`,{headers:HDR}).then(r=>r.json()); const h=j.data||{}; document.getElementById('rId').value=h.id||id; const sj=safeJson(h.schema_json); const ni=sj.name_i18n||{}; document.getElementById('rNameZh').value=ni.zh||''; document.getElementById('rNameEn').value=ni.en||''; document.getElementById('rTags').value=(sj.tags||[]).join(','); document.getElementById('rPrice').value=h.default_price_cents||sj.default_price_cents||''; document.getElementById('rEnabled').checked=(h.enabled==='1'); document.getElementById('rImg').value=sj.image_url||''; renderIngs(sj.ingredients||[]); renderSteps(sj.steps||[]); document.getElementById('rOpts').value=JSON.stringify(sj.options_schema||{},null,2); document.getElementById('rYield').value=sj.yield_ml||''; document.getElementById('rAllergens').value=sj.allergens_csv||'' }
+function renderIngs(arr){ const wrap=document.getElementById('ings'); wrap.innerHTML=''; arr.forEach((ing,idx)=>addIng(ing)); if(arr.length===0) addIng() }
+function addIng(ing){ const wrap=document.getElementById('ings'); const div=document.createElement('div'); div.className='row g-2 align-items-end mb-1'; div.innerHTML = `
+  <div class='col-4'><label class='form-label'>物料代码</label><input class='form-control mat' list='materialsList' placeholder='选择物料代码' value='${(ing&&ing.material)||ing&&ing.material_code||''}'></div>
+  <div class='col-3'><label class='form-label'>数量</label><input class='form-control amt' value='${(ing&&ing.amount)||''}'></div>
+  <div class='col-3'><label class='form-label'>单位</label><select class='form-select unit'><option>g</option><option>ml</option><option>pcs</option></select></div>
+  <div class='col-2 text-end'><button class='btn btn-sm btn-outline-danger' onclick='this.closest(".row").remove()'>删</button></div>`
+  wrap.appendChild(div); if(ing&&ing.unit) div.querySelector('.unit').value=ing.unit; const matI=div.querySelector('.mat'); matI.addEventListener('change',()=>{ const code=matI.value.trim(); const m=materialsMap[code]; if(m&&m.unit){ div.querySelector('.unit').value=m.unit } })
+}
+function renderSteps(arr){ const wrap=document.getElementById('steps'); wrap.innerHTML=''; arr.forEach((st,idx)=>addStep(st)); if(arr.length===0) addStep() ; updateStepsSummary()}
+function addStep(st){ const wrap=document.getElementById('steps'); const div=document.createElement('div'); div.className='row g-2 align-items-end mb-1'; div.innerHTML = `
+  <div class='col-2'><label class='form-label'>序号</label><input class='form-control seq' value='${(st&&st.seq)||''}'></div>
+  <div class='col-3'><label class='form-label'>类型</label><select class='form-select type'><option>brew</option><option>grind</option><option>steam</option><option>mix</option><option>wait</option></select></div>
+  <div class='col-3'><label class='form-label'>时长(ms)</label><input class='form-control t' value='${(st&&st.params&&st.params.time_ms)||''}'></div>
+  <div class='col-2'><label class='form-label'>温度(℃)</label><input class='form-control temp' value='${(st&&st.params&&st.params.temp_c)||''}'></div>
+  <div class='col-2 text-end'><button class='btn btn-sm btn-outline-danger' onclick='this.closest(".row").remove(); updateStepsSummary()'>删</button></div>`
+  wrap.appendChild(div); if(st&&st.type) div.querySelector('.type').value=st.type
+}
+function updateStepsSummary(){ let total=0; document.querySelectorAll('#steps .row').forEach(r=>{ const ms=parseInt(r.querySelector('.t').value||'0'); if(!isNaN(ms)) total+=ms }); document.getElementById('stepsSummary').innerText = `总时长：${total} ms` }
+async function saveRecipe(){ const id=document.getElementById('rId').value.trim(); if(!id) return alert('ID 不能为空'); const name_zh=document.getElementById('rNameZh').value.trim(); const name_en=document.getElementById('rNameEn').value.trim(); const tags=(document.getElementById('rTags').value||'').split(',').map(x=>x.trim()).filter(Boolean); const price=document.getElementById('rPrice').value.trim(); const enabled=document.getElementById('rEnabled').checked; const img=document.getElementById('rImg').value.trim(); const ings=[...document.querySelectorAll('#ings .row')].map(r=>({material:r.querySelector('.mat').value.trim(), amount: Number(r.querySelector('.amt').value||0), unit:r.querySelector('.unit').value})).filter(x=>x.material&&x.amount>0); const steps=[...document.querySelectorAll('#steps .row')].map((r,i)=>({seq: Number(r.querySelector('.seq').value||i+1), type:r.querySelector('.type').value, params:{time_ms: Number(r.querySelector('.t').value||0), temp_c: (r.querySelector('.temp').value||'')}})); const optsRaw=document.getElementById('rOpts').value.trim(); let opts={}; if(optsRaw){ try{ opts=JSON.parse(optsRaw) }catch{ return alert('选项 JSON 不合法') } } const yield_ml=document.getElementById('rYield').value.trim(); const allergens=document.getElementById('rAllergens').value.trim(); const schema={ name_i18n:{zh:name_zh,en:name_en}, tags, image_url: img, ingredients: ings, steps, options_schema: opts, default_price_cents: (price? Number(price): null), yield_ml: (yield_ml? Number(yield_ml): null), allergens_csv: allergens }; const body={ id, enabled, schema }; const resp=await fetch('/api/v1/recipes',{method:'POST',headers:HDR,body:JSON.stringify(body)}); const j=await resp.json(); if(!j.ok){ alert('保存失败: '+j.error) } else { cmToast('已保存','success'); load(1) } }
+async function copyRecipe(id){ openEditor(); await loadOne(id); document.getElementById('rId').value = id+'-copy' }
+async function delRecipe(id){ const j=await fetch(`/api/v1/recipes/${id}/usage`,{headers:HDR}).then(r=>r.json()); const u=j.data||{menu_refs:[],devices_active:[]}; if((u.menu_refs||[]).length || (u.devices_active||[]).length){ return alert('存在引用，禁止删除') } if(!confirm('确认删除?')) return; await fetch(`/api/v1/recipes/${id}`,{method:'DELETE',headers:HDR}); cmToast('已删除','success'); load(1) }
+async function publishOne(id){ const j=await fetch(`/api/v1/recipes/${id}/publish`,{method:'POST',headers:HDR}).then(r=>r.json()); if(j.ok){ cmToast('发布成功 v'+(j.data&&j.data.version),'success') } else { alert('发布失败: '+j.error) } }
+async function dispatchOne(id, devsList){ let arr=devsList; if(!arr){ const devs=prompt('输入设备ID,逗号分隔'); if(!devs) return; arr=devs.split(',').map(x=>x.trim()).filter(Boolean) } const j=await fetch(`/api/v1/recipes/${id}/dispatch`,{method:'POST',headers:HDR,body:JSON.stringify({device_ids:arr})}).then(r=>r.json()); if(j.ok){ cmToast('已下发批次 '+(j.data&&j.data.batch_id),'success') } else { alert('下发失败: '+j.error) } }
+async function publishCurrent(){ const id=document.getElementById('rId').value.trim(); if(!id) return; publishOne(id) }
+async function dispatchCurrent(){ const id=document.getElementById('rId').value.trim(); if(!id) return; const raw=document.getElementById('dispatchDevs').value.trim(); if(!raw) return; const arr=raw.split(',').map(x=>x.trim()).filter(Boolean); dispatchOne(id, arr)
+}
+async function batchEnable(on){ const ids=[...selected]; for(const id of ids){ const j=await fetch(`/api/v1/recipes/${id}`,{headers:HDR}).then(r=>r.json()); const h=j.data||{}; const sj=safeJson(h.schema_json); await fetch('/api/v1/recipes',{method:'POST',headers:HDR,body:JSON.stringify({id,enabled:on,schema:sj})}) } cmToast('批量完成','success'); load(1) }
+async function batchPublish(){ for(const id of [...selected]){ await fetch(`/api/v1/recipes/${id}/publish`,{method:'POST',headers:HDR}) } cmToast('批量发布完成','success') }
+async function batchDispatch(){ const devs=prompt('输入设备ID,逗号分隔'); if(!devs) return; const arr=devs.split(',').map(x=>x.trim()).filter(Boolean); for(const id of [...selected]){ await fetch(`/api/v1/recipes/${id}/dispatch`,{method:'POST',headers:HDR,body:JSON.stringify({device_ids:arr})}) } cmToast('批量下发完成','success') }
+
+async function exportRecipes(){ const resp=await fetch('/api/v1/recipes/export',{headers:HDR}); const blob=await resp.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='recipes.json'; a.click(); URL.revokeObjectURL(a.href) }
+// toast fallback
+if(typeof window.cmToast!=="function"){ window.cmToast=(msg)=>{ try{ const t=document.createElement('div'); t.className='position-fixed top-0 end-0 p-3'; t.style.zIndex=1080; t.innerHTML=`<div class="toast align-items-center text-bg-success border-0 show"><div class="d-flex"><div class="toast-body">${msg}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div></div>`; document.body.appendChild(t); setTimeout(()=>t.remove(),2000) }catch{ alert(msg) } } }
+async function importRecipes(){ const f=document.getElementById('impFile').files[0]; if(!f) return; const text=await f.text(); let arr=[]; try{ arr=JSON.parse(text) }catch{return alert('文件不是 JSON')} const pre=await fetch('/api/v1/recipes/import',{method:'POST',headers:HDR,body:JSON.stringify({strategy:'merge',payload:arr,dry_run:true})}).then(r=>r.json()); if(!pre.ok){ return alert('预检失败: '+pre.error) } if(!confirm(`将创建 ${pre.data.report.to_create}，更新 ${pre.data.report.to_update}，缺失物料 ${pre.data.report.missing_materials.length}，继续?`)) return; const res=await fetch('/api/v1/recipes/import',{method:'POST',headers:HDR,body:JSON.stringify({strategy:'merge',payload:arr,dry_run:false})}).then(r=>r.json()); if(res.ok){ cmToast('导入完成','success'); load(1) } else { alert('导入失败: '+res.error) } document.getElementById('impFile').value=''
+}
+
+loadMaterials();
+load(1)
 </script>
 {% endblock %}
