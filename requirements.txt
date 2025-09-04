@@ -1,0 +1,8 @@
+Flask==3.0.3
+redis==5.0.7
+APScheduler==3.10.4
+Flask-Cors==4.0.1
+python-dotenv==1.0.1
+pytz==2024.1
+Werkzeug==3.0.3
+fakeredis==2.23.2

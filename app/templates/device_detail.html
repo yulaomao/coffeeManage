@@ -1,0 +1,257 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>设备 {{ device_id }}</h3>
+<ul class="nav nav-tabs" id="devTabs">
+  <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-overview">Overview</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-orders">Orders</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-bins">Bins</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-commands">Commands</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-alarms">Alarms</a></li>
+  <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-menu">Menu</a></li>
+</ul>
+<div class="tab-content mt-3">
+  <div class="tab-pane fade show active" id="tab-overview">
+    <pre id="overview"></pre>
+  </div>
+  <div class="tab-pane fade" id="tab-orders">
+    <pre id="orders"></pre>
+  </div>
+  <div class="tab-pane fade" id="tab-bins">(TODO)</div>
+  <div class="tab-pane fade" id="tab-commands">
+    <button class="btn btn-sm btn-outline-primary" onclick="sendSync()">同步</button>
+    <pre id="commands"></pre>
+  </div>
+  <div class="tab-pane fade" id="tab-alarms">(TODO)</div>
+  <div class="tab-pane fade" id="tab-menu">
+    <div class="card mb-2">
+      <div class="card-body d-flex flex-wrap align-items-center gap-2">
+        <div>菜单版本：<span id="menuVer">-</span> / 状态：<span id="menuStatus">-</span></div>
+        <button class="btn btn-sm btn-success" onclick="createCat()">新建分类</button>
+        <button class="btn btn-sm btn-primary" onclick="publishMenu()">发布</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="exportMenu()">导出</button>
+        <label class="btn btn-sm btn-outline-secondary mb-0">
+          导入(覆盖)
+          <input id="importOverwrite" type="file" accept="application/json" hidden onchange="importMenu('overwrite', this)">
+        </label>
+        <label class="btn btn-sm btn-outline-secondary mb-0">
+          导入(合并)
+          <input id="importMerge" type="file" accept="application/json" hidden onchange="importMenu('merge', this)">
+        </label>
+        <div class="ms-auto small text-muted">可售预览：<span id="availCount">-</span> 个</div>
+      </div>
+    </div>
+    <div class="row g-2">
+      <div class="col-md-4">
+        <ul id="catList" class="list-group"></ul>
+      </div>
+      <div class="col-md-8">
+        <div id="itemArea"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const deviceId = '{{ device_id }}'
+let menuVer = null; // for If-Match
+const base = {'X-Role':'admin','Content-Type':'application/json'}
+const hdr = () => (menuVer ? {...base, 'If-Match': String(menuVer)} : base)
+
+function refreshOverview(){
+  fetch(`/api/v1/devices/${deviceId}/summary`,{headers:base})
+    .then(r=>r.json()).then(x=>{document.getElementById('overview').innerText=JSON.stringify(x.data,null,2)})
+}
+function refreshOrders(){
+  fetch(`/api/v1/devices/${deviceId}/orders`,{headers:base})
+    .then(r=>r.json()).then(x=>{document.getElementById('orders').innerText=JSON.stringify(x.data,null,2)})
+}
+
+function safeJSON(s){try{return JSON.parse(s||'{}')}catch(e){return {}}}
+
+async function loadMenu(){
+  const resp = await fetch(`/api/v1/devices/${deviceId}/menu`,{headers:base});
+  const {data} = await resp.json();
+  window.menuData = data; 
+  menuVer = (data.meta||{}).version; 
+  document.getElementById('menuVer').innerText = menuVer||'-'; 
+  document.getElementById('menuStatus').innerText = (data.meta||{}).status||'-';
+  // availability
+  try{
+    const a = await fetch(`/api/v1/devices/${deviceId}/menu/available`,{headers:base}).then(r=>r.json());
+    window.availSet = new Set(a.data||[]); document.getElementById('availCount').innerText = window.availSet.size||0
+  }catch(e){ window.availSet = new Set(); document.getElementById('availCount').innerText = '-' }
+  // categories
+  const ul=document.getElementById('catList');ul.innerHTML='';
+  (data.categories||[]).forEach((c,idx)=>{
+    const name=(safeJSON(c.name_i18n_json).zh)||(`分类 ${c.id}`)
+    const li=document.createElement('li');li.className='list-group-item';
+    li.innerHTML = `
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <a href="javascript:void(0)" onclick="renderItems(${c.id})" class="text-decoration-none">${name}</a>
+          ${c.visible==='0'?'<span class="badge text-bg-secondary ms-1">隐藏</span>':''}
+        </div>
+        <div class="btn-group btn-group-sm">
+          <button class="btn btn-outline-secondary" title="上移" onclick="reorderCat(${idx},-1)">↑</button>
+          <button class="btn btn-outline-secondary" title="下移" onclick="reorderCat(${idx},1)">↓</button>
+          <button class="btn btn-outline-secondary" title="编辑" onclick="editCat(${c.id})">编</button>
+          <button class="btn btn-outline-danger" title="删除" onclick="delCat(${c.id})">删</button>
+        </div>
+      </div>`
+    ul.appendChild(li)
+  })
+  if((data.categories||[])[0]) renderItems(data.categories[0].id)
+}
+
+function currentCat(){
+  const id = window.currentCatId; if(!id) return null;
+  return (window.menuData.categories||[]).find(x=>String(x.id)===String(id))||null
+}
+
+function renderItems(catId){
+  window.currentCatId = catId; 
+  const cat = (window.menuData.categories||[]).find(x=>String(x.id)===String(catId)); if(!cat) return;
+  const div=document.getElementById('itemArea');div.innerHTML='';
+  const name=(safeJSON(cat.name_i18n_json).zh)||(`分类 ${cat.id}`)
+  div.insertAdjacentHTML('beforeend',`
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">${name}</h5>
+      <div><button class="btn btn-sm btn-outline-success" onclick="addItem(${cat.id})">新增商品</button></div>
+    </div>`)
+  const list=document.createElement('div');div.appendChild(list)
+  (cat.items||[]).forEach((it,idx)=>{
+    const nm=(safeJSON(it.name_i18n_json).zh)||(`商品 ${it.id}`)
+    const vis=it.visibility||'visible'
+    const price=it.price_cents_override||''
+    const sch=(()=>{const x=safeJSON(it.schedule_json); return (x.ranges||[]).map(r=>r.join('-')).join(',')})()
+    const avail = window.availSet && window.availSet.has(String(it.id))
+    const card=document.createElement('div'); card.className='card p-2 mb-2'
+    card.innerHTML=`
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <div class="fw-semibold">${nm} ${avail?'<span class="badge text-bg-success ms-1">可售</span>':''}</div>
+          <div class="row g-2 mt-1">
+            <div class="col-4">
+              <label class="form-label form-label-sm">名称(zh)</label>
+              <input class="form-control form-control-sm" value="${nm}" oninput="this.dataset.v=this.value" placeholder="名称">
+            </div>
+            <div class="col-3">
+              <label class="form-label form-label-sm">价格(分)</label>
+              <input class="form-control form-control-sm" value="${price}" oninput="this.dataset.v=this.value" placeholder="1800">
+            </div>
+            <div class="col-5">
+              <label class="form-label form-label-sm">时段 HH:MM-HH:MM[,..]</label>
+              <input class="form-control form-control-sm" value="${sch}" oninput="this.dataset.v=this.value" placeholder="08:00-11:00,13:00-17:00">
+            </div>
+          </div>
+        </div>
+        <div class="btn-group btn-group-sm">
+          <select class="form-select form-select-sm" onchange="setVisibility(${it.id}, this.value)">
+            ${['visible','hidden','archived'].map(v=>`<option value="${v}" ${v===vis?'selected':''}>${v}</option>`).join('')}
+          </select>
+          <button class="btn btn-outline-secondary" title="上移" onclick="reorderItem(${idx},-1)">↑</button>
+          <button class="btn btn-outline-secondary" title="下移" onclick="reorderItem(${idx},1)">↓</button>
+          <button class="btn btn-outline-primary" onclick="saveItem(${it.id}, this)">保存</button>
+          <button class="btn btn-outline-danger" onclick="delItem(${it.id})">删</button>
+        </div>
+      </div>`
+    list.appendChild(card)
+  })
+}
+
+function createCat(){
+  const name = prompt('分类中文名','推荐'); if(name==null) return;
+  fetch(`/api/v1/devices/${deviceId}/menu/categories`,{method:'POST',headers:hdr(),body:JSON.stringify({name_i18n:{zh:name}})})
+    .then(handleWrite).then(loadMenu)
+}
+function editCat(catId){
+  const cat=(window.menuData.categories||[]).find(x=>String(x.id)===String(catId)); if(!cat) return;
+  const cur=(safeJSON(cat.name_i18n_json).zh)||''; const name=prompt('分类中文名',cur); if(name===null) return;
+  fetch(`/api/v1/devices/${deviceId}/menu/categories/${catId}`,{method:'PUT',headers:hdr(),body:JSON.stringify({name_i18n:{zh:name}})})
+    .then(handleWrite).then(loadMenu)
+}
+async function delCat(catId){
+  const ok = confirm('删除分类？若分类非空需指定目标分类ID进行迁移'); if(!ok) return;
+  let url=`/api/v1/devices/${deviceId}/menu/categories/${catId}`
+  const cat=(window.menuData.categories||[]).find(x=>String(x.id)===String(catId)); if(cat && (cat.items||[]).length){
+    const target = prompt('请输入目标分类ID，用于迁移现有商品'); if(!target) return;
+    url+=`?move_to=${encodeURIComponent(target)}`
+  }
+  fetch(url,{method:'DELETE',headers:hdr()})
+    .then(handleWrite).then(loadMenu)
+}
+function reorderCat(idx, delta){
+  const arr=[...(window.menuData.categories||[])]; const j=idx+delta; if(j<0||j>=arr.length) return;
+  [arr[idx],arr[j]]=[arr[j],arr[idx]]; const body=arr.map((c,i)=>({cat_id:String(c.id),sort_order:i+1}))
+  fetch(`/api/v1/devices/${deviceId}/menu/categories/reorder`,{method:'PATCH',headers:hdr(),body:JSON.stringify(body)})
+    .then(handleWrite).then(loadMenu)
+}
+function addItem(catId){
+  const name = prompt('商品中文名','拿铁'); if(name==null) return;
+  const price = prompt('价格(分)','1800');
+  fetch(`/api/v1/devices/${deviceId}/menu/items`,{method:'POST',headers:hdr(),body:JSON.stringify({cat_id:catId,recipe_id:'r-1',name_i18n:{zh:name},price_cents_override:price?Number(price):null})})
+    .then(handleWrite).then(()=>renderItems(catId))
+}
+function saveItem(itemId, btn){
+  const card = btn.closest('.card');
+  const inputs = card.querySelectorAll('input.form-control-sm');
+  const [nameI, priceI, schI] = inputs;
+  const body = {};
+  if(nameI && nameI.dataset.v!==undefined) body.name_i18n={zh:nameI.dataset.v}
+  if(priceI && priceI.dataset.v!==undefined){ const v = priceI.dataset.v.trim(); body.price_cents_override = v? Number(v): null }
+  if(schI && schI.dataset.v!==undefined){ const s=schI.dataset.v.trim(); body.schedule = s? {ranges: s.split(',').map(x=>x.trim()).filter(Boolean).map(x=>x.split('-'))} : {} }
+  fetch(`/api/v1/devices/${deviceId}/menu/items/${itemId}`,{method:'PUT',headers:hdr(),body:JSON.stringify(body)})
+    .then(handleWrite).then(()=>renderItems(window.currentCatId))
+}
+function setVisibility(itemId, vis){
+  fetch(`/api/v1/devices/${deviceId}/menu/items/${itemId}/visibility`,{method:'PATCH',headers:hdr(),body:JSON.stringify({visibility:vis})})
+    .then(handleWrite).then(()=>renderItems(window.currentCatId))
+}
+function reorderItem(idx, delta){
+  const cat=currentCat(); if(!cat) return; const j=idx+delta; if(j<0||j>=cat.items.length) return;
+  const arr=[...cat.items]; [arr[idx],arr[j]]=[arr[j],arr[idx]]; const body=arr.map((it,i)=>({item_id:String(it.id),sort_order:i+1}))
+  fetch(`/api/v1/devices/${deviceId}/menu/categories/${cat.id}/reorder`,{method:'PATCH',headers:hdr(),body:JSON.stringify(body)})
+    .then(handleWrite).then(()=>renderItems(cat.id))
+}
+function delItem(itemId){
+  fetch(`/api/v1/devices/${deviceId}/menu/items/${itemId}`,{method:'DELETE',headers:hdr()})
+    .then(handleWrite).then(()=>renderItems(window.currentCatId))
+}
+function publishMenu(){
+  fetch(`/api/v1/devices/${deviceId}/menu/publish`,{method:'POST',headers:hdr()})
+    .then(handleWrite).then(loadMenu)
+}
+async function exportMenu(){
+  const j = await fetch(`/api/v1/devices/${deviceId}/menu/export`,{headers:base}).then(r=>r.json());
+  const blob = new Blob([JSON.stringify(j.data,null,2)], {type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`menu-${deviceId}.json`; a.click(); URL.revokeObjectURL(a.href)
+}
+function importMenu(strategy, input){
+  const file = input.files && input.files[0]; if(!file) return;
+  const reader = new FileReader(); reader.onload = ()=>{
+    try{ const json = JSON.parse(reader.result);
+      fetch(`/api/v1/devices/${deviceId}/menu/import`,{method:'POST',headers:hdr(),body:JSON.stringify({strategy, menu_json: json})})
+        .then(handleWrite).then(loadMenu)
+    }catch(e){ alert('文件不是有效的JSON') }
+    input.value=''
+  }; reader.readAsText(file)
+}
+async function handleWrite(resp){
+  if(!resp) return; 
+  try{ const j = await resp.json(); 
+    if(!j.ok){ 
+      if(j.error==='CONFLICT'){ alert('版本冲突，已为你刷新菜单'); await loadMenu(); } 
+      else { alert('操作失败：'+j.error) } 
+    }
+  }catch(e){}
+}
+
+function sendSync(){
+  fetch(`/api/v1/devices/${deviceId}/commands`,{method:'POST',headers:base,body:JSON.stringify({type:'sync',payload:{}})})
+    .then(r=>r.json()).then(x=>{alert('已下发 '+(x.data&&x.data.command_id))})
+}
+
+refreshOverview();
+refreshOrders();
+loadMenu();
+</script>
+{% endblock %}

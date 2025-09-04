@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>审计</h3>
+<ul id="list" class="list-group"></ul>
+<script>
+const hdr={'X-Role':'admin'}
+function load(){fetch('/api/v1/audit',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(a=>`<li class='list-group-item'>${a.ts||''} ${a.action||''} ${a.summary||''}</li>`).join('')})}
+load()
+</script>
+{% endblock %}

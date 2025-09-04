@@ -1,0 +1,14 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>物料字典</h3>
+<div class="d-flex mb-2">
+  <button class="btn btn-sm btn-success" onclick="addMat()">新增</button>
+</div>
+<ul id="list" class="list-group"></ul>
+<script>
+const hdr={'X-Role':'admin','Content-Type':'application/json'}
+function load(){fetch('/api/v1/materials',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(m=>`<li class='list-group-item'>${m.code}</li>`).join('')})}
+function addMat(){const code=prompt('物料编码','M-01'); if(!code) return; fetch('/api/v1/materials',{method:'POST',headers:hdr,body:JSON.stringify({code, name_i18n:{zh:code}})}).then(load)}
+load()
+</script>
+{% endblock %}

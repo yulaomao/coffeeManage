@@ -1,0 +1,15 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>包管理</h3>
+<div class="d-flex mb-2">
+  <button class="btn btn-sm btn-success" onclick="addPkg()">上传(占位)</button>
+</div>
+<ul id="list" class="list-group"></ul>
+<script>
+const hdr={'X-Role':'admin','Content-Type':'application/json'}
+function load(){fetch('/api/v1/packages',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = (x.data||[]).map(p=>`<li class='list-group-item d-flex justify-content-between'><span>${p.id}</span><button class='btn btn-sm btn-outline-primary' onclick='dispatch("${p.id}")'>下发</button></li>`).join('')})}
+function addPkg(){const id=prompt('包ID','pkg-1'); if(!id) return; fetch('/api/v1/packages',{method:'POST',headers:hdr,body:JSON.stringify({id,name:id,md5:'demo'})}).then(load)}
+function dispatch(id){const ds=prompt('设备ID(逗号分隔)','dev-1'); if(!ds) return; fetch('/api/v1/commands/dispatch',{method:'POST',headers:hdr,body:JSON.stringify({device_ids:ds.split(','),command_type:'upgrade',payload:{package_id:id}})}).then(r=>r.json()).then(x=>alert('批次: '+x.data.batch_id))}
+load()
+</script>
+{% endblock %}

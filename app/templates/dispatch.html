@@ -1,0 +1,10 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>下发中心</h3>
+<ul id="list" class="list-group"></ul>
+<script>
+const hdr={'X-Role':'admin','Content-Type':'application/json'}
+function load(){fetch('/api/v1/commands/batches',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(b=>`<li class='list-group-item'><a href='/dispatch/${b.id||b.batch_id}'>${b.id||b.batch_id}</a></li>`).join('')})}
+load()
+</script>
+{% endblock %}

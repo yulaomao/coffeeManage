@@ -1,0 +1,9 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>批次 {{ batch_id }}</h3>
+<pre id="detail"></pre>
+<script>
+const hdr={'X-Role':'admin'}
+fetch(`/api/v1/commands/batches/{{ batch_id }}`,{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('detail').innerText=JSON.stringify(x.data,null,2)})
+</script>
+{% endblock %}
