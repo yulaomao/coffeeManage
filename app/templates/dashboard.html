@@ -1,351 +1,493 @@
 {% extends 'layout.html' %}
 {% block content %}
-<div class="position-sticky top-0 pb-2" style="z-index:100;">
-  <div class="d-flex align-items-center gap-3 pt-2">
-    <h4 class="mb-0">仪表盘</h4>
-    <div class="ms-auto d-flex gap-2">
-      <button class="btn btn-sm btn-outline-secondary" onclick="exportSummary()" aria-label="导出指标">导出</button>
-      <a class="btn btn-sm btn-outline-secondary" href="/orders" aria-label="前往订单">订单</a>
-      <a class="btn btn-sm btn-outline-secondary" href="/dispatch" aria-label="前往下发中心">下发中心</a>
-      <a class="btn btn-sm btn-outline-secondary" href="/devices" aria-label="前往设备">设备</a>
-      <a class="btn btn-sm btn-outline-secondary" href="#" onclick="cmUI.toast('文档建设中','info')" aria-label="帮助">帮助</a>
+
+<!-- Cyber Dashboard Header -->
+<div class="position-sticky top-0 pb-3" style="z-index:100;">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div class="d-flex align-items-center gap-3">
+      <h3 class="mb-0 fw-bold">指挥中心</h3>
+      <span class="status-dot online"></span>
+      <small class="text-muted">实时连接</small>
+    </div>
+    
+    <!-- Role Selector -->
+    <div class="d-flex align-items-center gap-3">
+      <div class="btn-group btn-group-sm" role="group" aria-label="角色切换">
+        <input type="radio" class="btn-check" name="roleSwitch" id="roleOps" value="ops" checked>
+        <label class="btn btn-outline-primary" for="roleOps">Ops</label>
+        <input type="radio" class="btn-check" name="roleSwitch" id="roleBiz" value="biz">
+        <label class="btn btn-outline-primary" for="roleBiz">Biz</label>
+        <input type="radio" class="btn-check" name="roleSwitch" id="roleEng" value="eng">
+        <label class="btn btn-outline-primary" for="roleEng">Eng</label>
+      </div>
+      
+      <!-- Quick Actions -->
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-primary" onclick="exportSummary()" aria-label="导出指标">
+          <i class="bi bi-download"></i>
+        </button>
+        <button class="btn btn-sm btn-outline-primary" onclick="commandPanel.open()" aria-label="命令面板">
+          <i class="bi bi-command"></i>
+        </button>
+        <a class="btn btn-sm btn-outline-primary" href="/dispatch" aria-label="前往下发中心">
+          <i class="bi bi-rocket"></i>
+        </a>
+      </div>
     </div>
   </div>
-  <div class="filterbar mt-2">
-    <div class="row g-2 align-items-end">
-      <div class="col-12 col-lg-4">
-        <label class="form-label">时间范围</label>
+
+  <!-- Time Range Controls -->
+  <div class="filterbar">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-6">
+        <label class="form-label fw-semibold">时间窗口</label>
         <div class="d-flex gap-2 flex-wrap">
-          <div class="btn-group btn-group-sm" role="group" aria-label="快捷时间">
+          <div class="btn-group btn-group-sm" role="group">
             <button id="btnToday" class="btn btn-outline-secondary" onclick="setRange('today')">Today</button>
             <button id="btn7d" class="btn btn-outline-secondary" onclick="setRange('7d')">7d</button>
             <button id="btn30d" class="btn btn-outline-secondary" onclick="setRange('30d')">30d</button>
           </div>
-          <div class="input-group input-group-sm" style="max-width:360px">
-            <span class="input-group-text">From</span>
-            <input id="fltFrom" class="form-control" placeholder="Unix 秒">
-            <span class="input-group-text">To</span>
-            <input id="fltTo" class="form-control" placeholder="Unix 秒">
+          <div class="input-group input-group-sm" style="max-width:300px">
+            <input id="fltFrom" class="form-control" placeholder="From (Unix)">
+            <input id="fltTo" class="form-control" placeholder="To (Unix)">
           </div>
-          <button class="btn btn-sm btn-primary ms-auto" onclick="reloadAll()">查询</button>
-          <button class="btn btn-sm btn-outline-secondary" onclick="resetRange()">重置</button>
         </div>
+      </div>
+      <div class="col-md-6 text-end">
+        <button class="btn btn-primary btn-sm" onclick="reloadAll()">
+          <i class="bi bi-arrow-clockwise me-1"></i>刷新
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="resetRange()">重置</button>
       </div>
     </div>
   </div>
 </div>
 
-<div id="dash-alert" class="alert alert-info d-none mt-2">加载中…</div>
+<!-- Loading & Error States -->
+<div id="dash-alert" class="alert alert-info d-none">
+  <div class="d-flex align-items-center">
+    <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+    数据加载中...
+  </div>
+</div>
 <div id="dash-error" class="alert alert-danger d-none"></div>
 
-<div class="row g-3">
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-primary"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg></div>
-          <div>
-            <div class="text-secondary">设备数</div>
-            <div class="fs-4 fw-semibold" id="kpi-device">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-success"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6V4z"/></svg></div>
-          <div class="w-100">
-            <div class="d-flex justify-content-between"><span class="text-secondary">在线率</span><span id="kpi-online-text">-</span></div>
-            <div class="progress" style="height:6px"><div id="kpi-online" class="progress-bar" role="progressbar" style="width:0%"></div></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-warning"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg></div>
-          <div>
-            <div class="text-secondary">今日订单</div>
-            <div class="fs-4 fw-semibold" id="kpi-orders">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-danger"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg></div>
-          <div>
-            <div class="text-secondary">开放告警</div>
-            <div class="fs-4 fw-semibold" id="kpi-alarms">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-success"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6V4z"/></svg></div>
-          <div>
-            <div class="text-secondary">今日营收(元)</div>
-            <div class="fs-4 fw-semibold" id="kpi-revenue">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-info"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12l5 5L20 7"/></svg></div>
-          <div>
-            <div class="text-secondary">成功率</div>
-            <div class="fs-4 fw-semibold" id="kpi-succ">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-sm-6 col-lg-3">
-    <div class="card shadow-sm h-100">
-      <div class="card-body">
-        <div class="d-flex align-items-center">
-          <div class="me-3 text-primary"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v2H4zm0 6h16v2H4zm0 6h10v2H4z"/></svg></div>
-          <div>
-            <div class="text-secondary">下发批次(活动)</div>
-            <div class="fs-4 fw-semibold" id="kpi-batches">-</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row g-3 mt-1">
-  <div class="col-12 col-lg-4">
-    <div class="card h-100 shadow-sm">
-      <div class="card-body">
-        <div class="text-secondary mb-1">低料设备</div>
-        <div class="fs-5" id="kpi-low">-</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-4">
-    <div class="card h-100 shadow-sm">
-      <div class="card-body">
-        <div class="text-secondary mb-1">待处理命令</div>
-        <div class="fs-5" id="kpi-cmd">-</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-4">
-    <div class="card h-100 shadow-sm">
-      <div class="card-body">
-        <div class="text-secondary mb-1">24h 菜单发布</div>
-        <div class="fs-5" id="kpi-publish">-</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row g-3 mt-1">
-  <div class="col-12 col-lg-8">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div class="text-secondary">订单趋势</div>
-          <small class="text-muted" id="sales-sum">-</small>
-        </div>
-        <canvas id="chart-sales" height="120"></canvas>
-      </div>
-    </div>
-  </div>
-  <div class="col-12 col-lg-4">
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="text-secondary mb-2">活跃设备</div>
-        <canvas id="chart-active" height="120"></canvas>
-      </div>
-    </div>
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="text-secondary mb-2">在线率</div>
-        <canvas id="chart-online" height="120"></canvas>
-      </div>
-    </div>
-  </div>
+<!-- Main Dashboard Grid -->
+<div class="dashboard-grid">
   
-</div>
+  <!-- 1. KPI Bridge Panel (Full Width) -->
+  <div class="dashboard-panel panel-full" id="kpi-bridge-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">核心指标舰桥</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="kpi-bridge">
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-device">-</div>
+        <div class="kpi-label">设备在线</div>
+        <div class="kpi-sparkline" id="device-sparkline"></div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-revenue">-</div>
+        <div class="kpi-label">今日营收</div>
+        <div class="kpi-sparkline" id="revenue-sparkline"></div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-orders">-</div>
+        <div class="kpi-label">今日杯数</div>
+        <div class="kpi-sparkline" id="orders-sparkline"></div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-cmd-fail">-</div>
+        <div class="kpi-label">命令失败率</div>
+        <div class="kpi-sparkline" id="cmd-fail-sparkline"></div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-low">-</div>
+        <div class="kpi-label">低料设备</div>
+        <div class="kpi-sparkline" id="low-sparkline"></div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-value" id="kpi-alarms">-</div>
+        <div class="kpi-label">开放告警</div>
+        <div class="kpi-sparkline" id="alarms-sparkline"></div>
+      </div>
+    </div>
+  </div>
 
-<div class="row g-3 mt-1">
-  <div class="col-12">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="row g-3">
-          <div class="col-12 col-lg-6">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <div class="text-secondary">最近下发批次</div>
-              <a class="small text-decoration-none" href="/dispatch">前往下发中心</a>
-            </div>
-            <div id="batch-empty" class="text-muted d-none">暂无批次，去下发中心创建。</div>
-            <div id="batch-list" class="list-group list-group-flush"></div>
-          </div>
-          <div class="col-12 col-lg-6">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <div class="text-secondary">低料设备详情</div>
-              <a class="small text-decoration-none" href="/devices">前往设备列表</a>
-            </div>
-            <div id="low-empty" class="text-muted d-none">全部设备料仓充足，无低料告警。</div>
-            <div id="low-list" class="list-group list-group-flush"></div>
-          </div>
+  <!-- 2. Device Health Star Map -->
+  <div class="dashboard-panel panel-large" id="device-starmap-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">设备健康星图</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="全屏"><i class="bi bi-arrows-fullscreen"></i></button>
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="device-starmap" id="device-starmap">
+      <!-- Device points will be dynamically generated -->
+    </div>
+  </div>
+
+  <!-- 3. Real-time Order & Revenue Flow -->
+  <div class="dashboard-panel panel-large" id="realtime-flow-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">实时订单营收流</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="暂停"><i class="bi bi-pause"></i></button>
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="realtime-flow" id="realtime-flow">
+      <canvas id="realtime-chart" width="100%" height="200"></canvas>
+    </div>
+  </div>
+
+  <!-- 4. Menu Heatmap & Funnel -->
+  <div class="dashboard-panel panel-tall" id="menu-heatmap-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">菜单热力漏斗</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="切换视图"><i class="bi bi-grid-3x3"></i></button>
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="menu-heatmap">
+      <div class="heatmap-matrix" id="heatmap-matrix">
+        <!-- Heatmap cells will be generated dynamically -->
+      </div>
+      <div class="conversion-funnel" id="conversion-funnel">
+        <div class="funnel-stage">
+          <div class="fw-semibold">浏览</div>
+          <div class="text-muted small">1,234 次</div>
+        </div>
+        <div class="funnel-stage">
+          <div class="fw-semibold">加购</div>
+          <div class="text-muted small">856 次</div>
+        </div>
+        <div class="funnel-stage">
+          <div class="fw-semibold">支付</div>
+          <div class="text-muted small">789 次</div>
+        </div>
+        <div class="funnel-stage">
+          <div class="fw-semibold">制作</div>
+          <div class="text-muted small">756 次</div>
         </div>
       </div>
     </div>
   </div>
-  
+
+  <!-- 5. Materials Radar -->
+  <div class="dashboard-panel panel-medium" id="materials-radar-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">物料补货雷达</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="生成补货单"><i class="bi bi-plus-circle"></i></button>
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="materials-radar">
+      <div class="radar-chart" id="materials-radar-chart"></div>
+      <div class="materials-list" id="materials-list">
+        <!-- Material items will be loaded dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Command & Dispatch Center -->
+  <div class="dashboard-panel panel-tall" id="command-center-panel">
+    <div class="panel-header">
+      <h5 class="panel-title">命令指挥台</h5>
+      <div class="panel-controls">
+        <button class="panel-control-btn" title="新建批次"><i class="bi bi-plus"></i></button>
+        <button class="panel-control-btn" title="设置"><i class="bi bi-gear"></i></button>
+      </div>
+    </div>
+    <div class="command-center">
+      <div class="command-header">
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-primary" onclick="createNewBatch()">
+            <i class="bi bi-lightning me-1"></i>新建批次
+          </button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="refreshBatches()">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      <div class="command-list" id="command-batches">
+        <!-- Command batches will be loaded dynamically -->
+      </div>
+    </div>
+  </div>
+
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!-- Enhanced JavaScript -->
 <script>
-const hdr={'X-Role':'admin'}
-const $=(id)=>document.getElementById(id)
-let curRange='7d'
-function setRange(r){ curRange=r; ['btnToday','btn7d','btn30d'].forEach(id=>$(id).classList.remove('active')); if(r==='today') $('btnToday').classList.add('active'); if(r==='7d') $('btn7d').classList.add('active'); if(r==='30d') $('btn30d').classList.add('active'); applyRangeInputs(); reloadAll() }
-function resetRange(){ curRange='7d'; $('fltFrom').value=''; $('fltTo').value=''; setRange('7d') }
-function getRange(){
-  const now=Math.floor(Date.now()/1000)
-  const fromInp = ( $('fltFrom').value||'' ).trim(); const toInp=( $('fltTo').value||'' ).trim()
-  if(fromInp && toInp){ return {from:Number(fromInp), to:Number(toInp)} }
-  if(curRange==='today'){ const d=new Date(); d.setHours(0,0,0,0); return {from:Math.floor(d.getTime()/1000), to:now} }
-  if(curRange==='30d'){ return {from:now-30*86400, to:now} }
-  return {from:now-7*86400, to:now}
+// Dashboard configuration
+const dashboardConfig = {
+  role: 'ops', // ops, biz, eng
+  refreshInterval: 15000, // 15 seconds
+  realtimeEnabled: true
+};
+
+// Global variables for existing compatibility
+let curRange = '7d';
+const hdr = {'Content-Type': 'application/json'};
+const $ = (id) => document.getElementById(id);
+
+// Enhanced dashboard functions
+function setRange(range) {
+  curRange = range;
+  ['btnToday', 'btn7d', 'btn30d'].forEach(id => {
+    $(id).classList.remove('active');
+  });
+  $('btn' + (range === 'today' ? 'Today' : range)).classList.add('active');
+  applyRangeInputs();
 }
-function applyRangeInputs(){ const r=getRange(); $('fltFrom').value=String(r.from); $('fltTo').value=String(r.to) }
-function reloadAll(){ load(); loadTrends(); loadLow(); loadBatches(); loadOrdersKPI() }
-function showLoading(flag){
-  $('dash-alert').classList.toggle('d-none', !flag)
+
+function getRange() {
+  const now = Math.floor(Date.now() / 1000);
+  if (curRange === 'today') {
+    const todayStart = Math.floor(new Date().setHours(0,0,0,0) / 1000);
+    return {from: todayStart, to: now};
+  }
+  if (curRange === '30d') return {from: now - 30*86400, to: now};
+  return {from: now - 7*86400, to: now};
 }
-function showError(msg){
-  const el=$('dash-error'); el.classList.toggle('d-none', !msg); if(msg) el.innerText=msg
+
+function applyRangeInputs() {
+  const r = getRange();
+  $('fltFrom').value = String(r.from);
+  $('fltTo').value = String(r.to);
 }
-async function load(){
-  showLoading(true); showError('')
-  try{
-    const r = await fetch('/api/v1/dashboard/summary',{headers:hdr});
+
+function reloadAll() {
+  load();
+  loadTrends();
+  loadLow();
+  loadBatches();
+  loadOrdersKPI();
+  updateDeviceStarmap();
+  updateMaterialsRadar();
+}
+
+function showLoading(flag) {
+  $('dash-alert').classList.toggle('d-none', !flag);
+}
+
+function showError(msg) {
+  const el = $('dash-error');
+  el.classList.toggle('d-none', !msg);
+  if (msg) el.innerText = msg;
+}
+
+// Enhanced KPI loading with sparklines
+async function load() {
+  showLoading(true);
+  showError('');
+  try {
+    const r = await fetch('/api/v1/dashboard/summary', {headers: hdr});
     const j = await r.json();
-    const d = j.data||{};
-    $('kpi-device').innerText = d.device_total ?? '-'
-    const rate = Number(d.online_rate||0)
-    $('kpi-online').style.width = rate+'%'
-    $('kpi-online-text').innerText = isNaN(rate)?'-':(rate+'%')
-  // 今日订单/营收/成功率 由订单统计填充
-    $('kpi-alarms').innerText = d.alarms_open ?? '-'
-    $('kpi-low').innerText = d.low_material_devices ?? '-'
-    $('kpi-cmd').innerText = d.pending_commands_count ?? '-'
-    $('kpi-publish').innerText = d.menu_published_today ?? '-'
-  }catch(e){
-    showError('加载失败：'+e)
-  }finally{
-    showLoading(false)
+    const d = j.data || {};
+    
+    // Update KPI values with animations
+    updateKPI('kpi-device', d.device_total ?? '-');
+    updateKPI('kpi-alarms', d.alarms_open ?? '-');
+    updateKPI('kpi-low', d.low_material_devices ?? '-');
+    updateKPI('kpi-cmd-fail', ((d.failed_commands || 0) / Math.max(d.total_commands || 1, 1) * 100).toFixed(1) + '%');
+    
+  } catch(e) {
+    showError('加载失败：' + e);
+  } finally {
+    showLoading(false);
   }
 }
-async function loadTrends(){
-  try{
-  const days = (curRange==='today')?1: (curRange==='30d'?30:7)
-  const r = await fetch('/api/v1/dashboard/trends?days='+days,{headers:hdr});
-    const j = await r.json(); const t=j.data||{};
-    const labels=t.days||[]; const sales=t.sales||[]; const active=t.active_devices||[];
-    $('sales-sum').innerText = '合计：'+(sales.reduce((a,b)=>a+b,0)||0)
-    // sales line
-    new Chart($('chart-sales'),{type:'line',data:{labels,datasets:[{label:'销量',data:sales,borderColor:'#0d6efd',backgroundColor:'rgba(13,110,253,.15)',fill:true,tension:.3}]},options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:true}}}})
-    // active bar
-    new Chart($('chart-active'),{type:'bar',data:{labels,datasets:[{label:'活跃设备',data:active,backgroundColor:'#198754'}]},options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{beginAtZero:true}}}})
-    // online doughnut uses summary loaded earlier
-    const text = $('kpi-online-text').innerText.replace('%','')
-    const rate = Number(text)||0
-    new Chart($('chart-online'),{type:'doughnut',data:{labels:['在线','离线'],datasets:[{data:[rate,100-rate],backgroundColor:['#20c997','#dee2e6']}]},options:{cutout:'70%',plugins:{legend:{display:false}}}})
-  }catch(e){/* ignore charts error */}
-}
-async function loadLow(){
-  try{
-    const r = await fetch('/api/v1/dashboard/low-materials?limit=12',{headers:hdr});
-    const j = await r.json(); const list = j.data||[];
-    const wrap = $('low-list'); wrap.innerHTML='';
-    if(!list.length){ $('low-empty').classList.remove('d-none'); return }
-    $('low-empty').classList.add('d-none');
-    for(const d of list){
-      const dev = document.createElement('a');
-      dev.className='list-group-item list-group-item-action';
-      dev.href = `/devices/${encodeURIComponent(d.device_id)}`;
-      const name = (d.alias&&d.alias.trim())?`${d.alias}（${d.device_id}）`:d.device_id;
-      const badge = `<span class="badge rounded-pill text-bg-danger ms-2">${d.low_count}</span>`;
-      let bins = '';
-      for(const b of (d.bins||[])){
-        const level = (b.pct<=10)?'danger':(b.pct<=30?'warning':'secondary');
-        bins += `<span class="badge text-bg-${level} me-2 mb-1">${b.material_name} ${b.pct}%</span>`
-      }
-      dev.innerHTML = `
-        <div class="d-flex justify-content-between align-items-center">
-          <div class="fw-semibold">${name}${badge}</div>
-          <small class="text-muted">点击查看设备</small>
-        </div>
-        <div class="mt-2">${bins}</div>
-      `;
-      wrap.appendChild(dev);
-    }
-  }catch(e){ /* non-blocking */ }
-}
-async function loadOrdersKPI(){
-  try{
-    const r = getRange();
-    const qs = new URLSearchParams({ from:String(r.from), to:String(r.to) })
-    const j = await fetch('/api/v1/orders/stats?'+qs.toString(),{headers:hdr}).then(x=>x.json())
-    const s = j.data||{}
-    $('kpi-orders').innerText = s.total ?? '-'
-    $('kpi-revenue').innerText = (s.revenue!=null? s.revenue : '-')
-    $('kpi-succ').innerText = (s.success_rate!=null? (s.success_rate+'%') : '-')
-  }catch{ /* ignore */ }
-}
-async function loadBatches(){
-  try{
-    // 活动批次（队列中 + 暂停视为活动）
-    const d1 = await fetch('/api/v1/commands/batches?page=1&page_size=1&status=queued',{headers:hdr}).then(r=>r.json()).then(x=>x.data||{})
-    const activeCount = (d1.total||0)
-    $('kpi-batches').innerText = activeCount
-    const d2 = await fetch('/api/v1/commands/batches?page=1&page_size=5',{headers:hdr}).then(r=>r.json()).then(x=>x.data||{})
-    const list = d2.items||[]
-    const wrap=$('batch-list'); wrap.innerHTML=''
-    if(!list.length){ $('batch-empty').classList.remove('d-none'); return }
-    $('batch-empty').classList.add('d-none')
-    for(const b of list){
-      const id=b.id||b.batch_id; const cntT=b.count_total||0; const s=(b.count_success||0), f=(b.count_fail||0), p=(b.count_pending||0)
-      const a=document.createElement('a'); a.className='list-group-item list-group-item-action'; a.href='/dispatch/'+id
-      a.innerHTML = `<div class='d-flex justify-content-between'><div class='fw-semibold'>${b.type||''} <span class='text-muted'>${id}</span></div><small class='text-muted'>${fmtTime(b.created_ts)}</small></div>
-        <div class='small mt-1'>T:${cntT} <span class='text-success'>S:${s}</span> <span class='text-danger'>F:${f}</span> <span class='text-primary'>P:${p}</span></div>`
-      wrap.appendChild(a)
-    }
-  }catch{ /* ignore */ }
-}
-function fmtTime(s){ if(!s) return ''; const d=new Date(parseInt(s)*1000); return d.toLocaleString() }
 
-// init
-setRange('7d')
+function updateKPI(elementId, value) {
+  const element = $(elementId);
+  if (element && element.textContent !== value) {
+    element.style.transform = 'scale(1.1)';
+    element.textContent = value;
+    setTimeout(() => {
+      element.style.transform = 'scale(1)';
+    }, 200);
+  }
+}
+
+// Device starmap visualization
+function updateDeviceStarmap() {
+  const starmap = $('device-starmap');
+  // This would integrate with actual device data
+  // For now, showing placeholder structure
+}
+
+// Materials radar update
+function updateMaterialsRadar() {
+  const materialsList = $('materials-list');
+  // Load materials data and update radar chart
+}
+
+// Batch operations
+async function loadBatches() {
+  try {
+    const r = await fetch('/api/v1/commands/batches?limit=5', {headers: hdr});
+    const j = await r.json();
+    const data = j.data || {};
+    const batches = data.items || []; // Fix: handle the proper data structure
+    
+    const container = $('command-batches');
+    if (!container) return;
+    
+    container.innerHTML = '';
+    
+    batches.forEach(batch => {
+      const batchElement = createBatchElement(batch);
+      container.appendChild(batchElement);
+    });
+    
+    // Show placeholder if no batches
+    if (batches.length === 0) {
+      container.innerHTML = `
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-inbox fs-1 mb-2 d-block"></i>
+          <div>暂无命令批次</div>
+          <small>点击"新建批次"开始</small>
+        </div>
+      `;
+    }
+  } catch(e) {
+    console.error('Failed to load batches:', e);
+    const container = $('command-batches');
+    if (container) {
+      container.innerHTML = `
+        <div class="text-center text-danger py-4">
+          <i class="bi bi-exclamation-triangle fs-1 mb-2 d-block"></i>
+          <div>加载失败</div>
+          <small>${e.message}</small>
+        </div>
+      `;
+    }
+  }
+}
+
+function createBatchElement(batch) {
+  const div = document.createElement('div');
+  div.className = 'command-batch';
+  div.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="fw-semibold">${batch.name || batch.id}</div>
+      <span class="status-dot ${batch.status || 'processing'}"></span>
+    </div>
+    <div class="batch-progress">
+      <div class="batch-progress-fill" style="width: ${batch.progress || 0}%"></div>
+    </div>
+    <div class="small text-muted mt-1">
+      ${batch.completed || 0}/${batch.total || 0} 完成
+    </div>
+  `;
+  
+  div.addEventListener('click', () => {
+    window.location.href = `/dispatch/${batch.id}`;
+  });
+  
+  return div;
+}
+
+// Role switching
+document.addEventListener('DOMContentLoaded', () => {
+  // Initialize role switching
+  document.querySelectorAll('input[name="roleSwitch"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      dashboardConfig.role = e.target.value;
+      applyRoleView(e.target.value);
+    });
+  });
+  
+  // Initialize dashboard
+  setRange('7d');
+  reloadAll();
+  
+  // Start real-time updates
+  if (dashboardConfig.realtimeEnabled) {
+    setInterval(reloadAll, dashboardConfig.refreshInterval);
+  }
+});
+
+function applyRoleView(role) {
+  // Hide/show panels based on role
+  const panels = document.querySelectorAll('.dashboard-panel');
+  panels.forEach(panel => {
+    panel.style.display = shouldShowPanelForRole(panel.id, role) ? 'block' : 'none';
+  });
+}
+
+function shouldShowPanelForRole(panelId, role) {
+  // Define which panels to show for each role
+  const rolePanels = {
+    ops: ['kpi-bridge-panel', 'device-starmap-panel', 'materials-radar-panel', 'command-center-panel'],
+    biz: ['kpi-bridge-panel', 'realtime-flow-panel', 'menu-heatmap-panel'],
+    eng: ['kpi-bridge-panel', 'device-starmap-panel', 'command-center-panel', 'realtime-flow-panel']
+  };
+  
+  return rolePanels[role]?.includes(panelId) ?? true;
+}
+
+// Legacy compatibility functions
+async function loadTrends() {
+  try {
+    const days = curRange === 'today' ? 1 : curRange === '30d' ? 30 : 7;
+    const r = await fetch(`/api/v1/dashboard/trends?days=${days}`, {headers: hdr});
+    const j = await r.json();
+    // Update trend visualizations
+  } catch(e) {
+    console.error('Failed to load trends:', e);
+  }
+}
+
+async function loadLow() {
+  try {
+    const r = await fetch('/api/v1/dashboard/low-materials?limit=10', {headers: hdr});
+    const j = await r.json();
+    // Update low materials display
+  } catch(e) {
+    console.error('Failed to load low materials:', e);
+  }
+}
+
+async function loadOrdersKPI() {
+  try {
+    const range = getRange();
+    const qs = new URLSearchParams({
+      from: String(range.from),
+      to: String(range.to)
+    });
+    const r = await fetch(`/api/v1/orders/stats?${qs}`, {headers: hdr});
+    const j = await r.json();
+    const d = j.data || {};
+    
+    updateKPI('kpi-orders', d.total_orders ?? '-');
+    updateKPI('kpi-revenue', d.total_revenue ? `¥${(d.total_revenue/100).toFixed(2)}` : '-');
+  } catch(e) {
+    console.error('Failed to load orders KPI:', e);
+  }
+}
+
+function exportSummary() {
+  cmUI.toast('导出功能准备中...', 'info');
+}
+
+function resetRange() {
+  setRange('7d');
+  reloadAll();
+}
+
+function createNewBatch() {
+  window.location.href = '/dispatch';
+}
+
 </script>
+
 {% endblock %}

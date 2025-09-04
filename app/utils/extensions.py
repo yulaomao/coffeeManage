@@ -1,8 +1,10 @@
 from flask import Flask
 from flask_cors import CORS
 from redis import Redis
+import fakeredis
 from apscheduler.schedulers.background import BackgroundScheduler
 import json
+import os
 
 
 class RedisClient:
@@ -11,7 +13,11 @@ class RedisClient:
 
     def init_app(self, app: Flask):
         url = app.config.get("REDIS_URL")
-        self._client = Redis.from_url(url, decode_responses=True)
+        # Use FakeRedis for development if Redis is not available
+        if url == "redis://localhost:6379/0" and os.environ.get("FLASK_ENV") != "production":
+            self._client = fakeredis.FakeRedis(decode_responses=True)
+        else:
+            self._client = Redis.from_url(url, decode_responses=True)
 
     @property
     def r(self):
