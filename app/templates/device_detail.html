@@ -302,7 +302,7 @@ function refreshOverview(){
 let ordPage=1, ordTotal=0, ordPageSize=50, ordRows=[]
 function ordSkeleton(){ document.getElementById('ordTbody').innerHTML = `<tr><td colspan="10"><div class="placeholder-glow"><span class="placeholder col-12" style="height:18px;display:block"></span></div></td></tr>` }
 function ordCols(rows){ const set=new Set(); for(const r of rows){ for(const k of Object.keys(r||{})){ set.add(k) } } const preferred=['order_id','id','status','item','amount_cents','total_cents','pay_method','server_ts','device_ts']; const cols=[...preferred.filter(c=>set.has(c)), ...[...set].filter(c=>!preferred.includes(c)).sort()]; return cols }
-function colName(c){ const map={order_id:'订单号',id:'编号',status:'状态',item:'商品',amount_cents:'金额(分)',total_cents:'总额(分)',pay_method:'支付方式',server_ts:'服务器时间',device_ts:'设备时间'}; if(map[c]) return map[c]; if(c.endsWith('_ts')) return '时间'; return c }
+function colName(c){ const map={order_id:'订单号',id:'编号',status:'状态',item:'商品',item_name:'商品',name:'商品',amount_cents:'金额(分)',total_cents:'总额(分)',pay_method:'支付方式',server_ts:'服务器时间',device_ts:'设备时间'}; if(map[c]) return map[c]; if(c.endsWith('_ts')) return '时间'; return c }
 async function loadOrders(page){
   ordPage = page||1; ordPageSize = Number(document.getElementById('ordPageSize').value||50)
   const from = document.getElementById('ordFrom').value.trim(); const to = document.getElementById('ordTo').value.trim();
@@ -370,7 +370,7 @@ function alarmSet(id, st){ fetch(`/api/v1/devices/${deviceId}/alarms/${id}/statu
 
 function safeJSON(s){try{return JSON.parse(s||'{}')}catch(e){return {}}}
 
-async function loadMenu(){
+async function loadMenu(selectCatId){
   const resp = await fetch(`/api/v1/devices/${deviceId}/menu`,{headers:base});
   const {data} = await resp.json();
   window.menuData = data; 
@@ -408,7 +408,10 @@ async function loadMenu(){
   li.addEventListener('drop', (e)=>{ e.preventDefault(); li.classList.remove('drag-over'); const from = Number(e.dataTransfer.getData('text/plain')); const to = Number(li.dataset.index); if(!Number.isNaN(from)&&!Number.isNaN(to)&&from!==to){ dndReorderCats(from,to) } })
   ul.appendChild(li)
   })
-  if((data.categories||[])[0]) renderItems(data.categories[0].id)
+  const cats = (data.categories||[])
+  if(!cats.length) { document.getElementById('itemArea').innerHTML=''; return }
+  const target = selectCatId && cats.find(c=>String(c.id)===String(selectCatId))
+  renderItems(target? target.id : cats[0].id)
 }
 
 function currentCat(){
@@ -426,7 +429,7 @@ function renderItems(catId){
   div.insertAdjacentHTML('beforeend',`
     <div class="d-flex justify-content-between align-items-center mb-2">
       <h5 class="mb-0">${name}</h5>
-      <div><button class="btn btn-sm btn-outline-success" onclick="addItem(${cat.id})">新增商品</button></div>
+  <div><button class="btn btn-sm btn-outline-success" onclick="openCreateItem(${cat.id})">新增商品</button></div>
     </div>`)
   const list=document.createElement('div');div.appendChild(list)
   // search & filter
@@ -520,14 +523,6 @@ function reorderCat(idx, delta){
     .then(handleWrite).then(loadMenu)
 }
 function dndReorderCats(from, to){ const arr=[...(window.menuData.categories||[])]; const moved=arr.splice(from,1)[0]; arr.splice(to,0,moved); const body=arr.map((c,i)=>({cat_id:String(c.id),sort_order:i+1})); fetch(`/api/v1/devices/${deviceId}/menu/categories/reorder`,{method:'PATCH',headers:hdr(),body:JSON.stringify(body)}).then(handleWrite).then(loadMenu) }
-function addItem(catId){
-  const name = prompt('商品中文名','拿铁'); if(name==null) return;
-  const price = prompt('价格(分)','1800');
-  if(!recipeListCache.length){ loadRecipeOptions() }
-  const rid = prompt('配方ID（必须为已存在的配方）', recipeListCache[0]? recipeListCache[0].id : '') ; if(!rid) return;
-  fetch(`/api/v1/devices/${deviceId}/menu/items`,{method:'POST',headers:hdr(),body:JSON.stringify({cat_id:catId,recipe_id:String(rid),name_i18n:{zh:name},price_cents_override:price?Number(price):null})})
-    .then(handleWrite).then(()=>renderItems(catId))
-}
 function saveItem(itemId, btn){
   const card = btn.closest('.card');
   const inputs = card.querySelectorAll('input.form-control-sm');
@@ -564,24 +559,82 @@ document.body.insertAdjacentHTML('beforeend',`
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
   </div>
   <div class="offcanvas-body">
-    <div class="mb-2"><label class="form-label">名称(zh)</label><input id="edName" class="form-control"></div>
-  <div class="mb-2"><label class="form-label">配方ID</label><input id="edRecipeId" class="form-control" list="recipeList" placeholder="选择/输入已存在的配方ID"></div>
+    <div class="mb-2"><label class="form-label">名称(zh)</label><input id="edName" class="form-control" placeholder="自动随配方填充，可修改"></div>
+    <div class="mb-2"><label class="form-label">配方ID</label><input id="edRecipeId" class="form-control" list="recipeList" placeholder="选择/输入已存在的配方ID"></div>
     <div class="mb-2"><label class="form-label">图片URL</label><input id="edImg" class="form-control"></div>
-    <div class="mb-2"><label class="form-label">价格(分，留空继承)</label><input id="edPrice" class="form-control" placeholder="1800"></div>
+    <div class="mb-2"><label class="form-label">价格(分，留空继承)</label><input id="edPrice" class="form-control" placeholder="自动随配方建议价，可修改"></div>
     <div class="mb-2"><label class="form-label">角标(逗号分隔)</label><input id="edBadges" class="form-control" placeholder="新品,热销"></div>
     <div class="mb-2"><label class="form-label">标签(逗号分隔)</label><input id="edTags" class="form-control" placeholder="冰,加糖"></div>
     <div class="mb-2"><label class="form-label">时段 HH:MM-HH:MM[,..]</label><input id="edSchedule" class="form-control" placeholder="08:00-11:00,13:00-17:00"></div>
     <div class="text-end">
-      <button class="btn btn-primary" onclick="saveItemFromEditor()">保存</button>
+      <button id="edSaveBtn" class="btn btn-primary" onclick="saveItemFromEditor()">保存</button>
     </div>
   </div>
 </div>`)
-let edItemId=null; let itemEditor=null
-function openItemEditor(id){ edItemId=String(id); const cat=currentCat(); const it=(cat.items||[]).find(x=>String(x.id)===edItemId)||{}; if(!recipeListCache.length){ loadRecipeOptions() } const nm=(safeJSON(it.name_i18n_json).zh)||''; const sch=(()=>{const x=safeJSON(it.schedule_json); return (x.ranges||[]).map(r=>r.join('-')).join(',')})(); document.getElementById('edName').value=nm; document.getElementById('edRecipeId').value=it.recipe_id||''; document.getElementById('edImg').value=it.image_url||''; document.getElementById('edPrice').value=it.price_cents_override||''; document.getElementById('edBadges').value=(it.badges_csv||''); document.getElementById('edTags').value=(it.tags_csv||''); document.getElementById('edSchedule').value=sch; if(!itemEditor){ itemEditor = new bootstrap.Offcanvas('#itemEditor') } itemEditor.show() }
-function saveItemFromEditor(){ const body={}; const name=document.getElementById('edName').value.trim(); if(name!=='') body.name_i18n={zh:name}; const rid=document.getElementById('edRecipeId').value.trim(); if(rid!=='') body.recipe_id=rid; const img=document.getElementById('edImg').value.trim(); body.image_url=img; const price=document.getElementById('edPrice').value.trim(); body.price_cents_override = price? Number(price): null; const badges=document.getElementById('edBadges').value.trim(); body.badges = badges? badges.split(',').map(x=>x.trim()).filter(Boolean): []; const tags=document.getElementById('edTags').value.trim(); body.tags = tags? tags.split(',').map(x=>x.trim()).filter(Boolean): []; const s=document.getElementById('edSchedule').value.trim(); body.schedule = s? {ranges: s.split(',').map(x=>x.trim()).filter(Boolean).map(x=>x.split('-'))}: {}; fetch(`/api/v1/devices/${deviceId}/menu/items/${edItemId}`,{method:'PUT',headers:hdr(),body:JSON.stringify(body)}).then(handleWrite).then(()=>{ itemEditor.hide(); renderItems(window.currentCatId) }) }
+let edItemId=null; let itemEditor=null; let edCreateCatId=null; let edMode='edit'
+function openItemEditor(id){
+  edMode='edit'; edItemId=String(id); edCreateCatId=null; if(!recipeListCache.length){ loadRecipeOptions() }
+  const cat=currentCat(); const it=(cat.items||[]).find(x=>String(x.id)===edItemId)||{};
+  const nm=(safeJSON(it.name_i18n_json).zh)||'';
+  const sch=(()=>{const x=safeJSON(it.schedule_json); return (x.ranges||[]).map(r=>r.join('-')).join(',')})();
+  document.getElementById('edName').value=nm;
+  document.getElementById('edRecipeId').value=it.recipe_id||'';
+  document.getElementById('edImg').value=it.image_url||'';
+  document.getElementById('edPrice').value=it.price_cents_override||'';
+  document.getElementById('edBadges').value=(it.badges_csv||'');
+  document.getElementById('edTags').value=(it.tags_csv||'');
+  document.getElementById('edSchedule').value=sch;
+  document.getElementById('itemEditorLabel').innerText='编辑商品';
+  if(!itemEditor){ itemEditor = new bootstrap.Offcanvas('#itemEditor') }
+  itemEditor.show()
+}
+function openCreateItem(catId){
+  edMode='create'; edItemId=null; edCreateCatId=catId; if(!recipeListCache.length){ loadRecipeOptions() }
+  document.getElementById('edName').value='';
+  document.getElementById('edRecipeId').value='';
+  document.getElementById('edImg').value='';
+  document.getElementById('edPrice').value='';
+  document.getElementById('edBadges').value='';
+  document.getElementById('edTags').value='';
+  document.getElementById('edSchedule').value='';
+  document.getElementById('itemEditorLabel').innerText='新增商品';
+  if(!itemEditor){ itemEditor = new bootstrap.Offcanvas('#itemEditor') }
+  // when recipe changes, try autofill name/price from cache
+  const ridInput = document.getElementById('edRecipeId');
+  ridInput.onchange = ()=>{
+    const rid = ridInput.value.trim();
+    const r = recipeListCache.find(x=>String(x.id)===String(rid));
+    if(r){
+      try{ const sj = JSON.parse(r.schema_json||'{}'); const name=(sj.name_i18n||{}).zh || r.name || r.id; const price=(sj.price_cents||sj.price||''); if(!document.getElementById('edName').value) document.getElementById('edName').value=name; if(!document.getElementById('edPrice').value && price!=='') document.getElementById('edPrice').value=price }catch{}
+    }
+  }
+  itemEditor.show()
+}
+function saveItemFromEditor(){
+  const body={};
+  const name=document.getElementById('edName').value.trim(); if(name!=='') body.name_i18n={zh:name};
+  const rid=document.getElementById('edRecipeId').value.trim(); if(rid!=='') body.recipe_id=rid;
+  const img=document.getElementById('edImg').value.trim(); body.image_url=img;
+  const price=document.getElementById('edPrice').value.trim(); body.price_cents_override = price? Number(price): null;
+  const badges=document.getElementById('edBadges').value.trim(); body.badges = badges? badges.split(',').map(x=>x.trim()).filter(Boolean): [];
+  const tags=document.getElementById('edTags').value.trim(); body.tags = tags? tags.split(',').map(x=>x.trim()).filter(Boolean): [];
+  const s=document.getElementById('edSchedule').value.trim(); body.schedule = s? {ranges: s.split(',').map(x=>x.trim()).filter(Boolean).map(x=>x.split('-'))}: {};
+
+  if(edMode==='create'){
+    if(!body.recipe_id){ cmToast('必须选择已存在的配方','error'); return }
+    body.cat_id = edCreateCatId;
+    fetch(`/api/v1/devices/${deviceId}/menu/items`,{method:'POST',headers:hdr(),body:JSON.stringify(body)})
+      .then(handleWrite)
+      .then(()=>{ itemEditor.hide(); loadMenu(edCreateCatId) })
+  } else {
+    fetch(`/api/v1/devices/${deviceId}/menu/items/${edItemId}`,{method:'PUT',headers:hdr(),body:JSON.stringify(body)})
+      .then(handleWrite)
+      .then(()=>{ itemEditor.hide(); renderItems(window.currentCatId) })
+  }
+}
 function delItem(itemId){
   fetch(`/api/v1/devices/${deviceId}/menu/items/${itemId}`,{method:'DELETE',headers:hdr()})
-    .then(handleWrite).then(()=>renderItems(window.currentCatId))
+  .then(handleWrite).then(()=>loadMenu(window.currentCatId))
 }
 function publishMenu(){
   fetch(`/api/v1/devices/${deviceId}/menu/publish`,{method:'POST',headers:hdr()})

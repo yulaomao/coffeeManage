@@ -1,9 +1,108 @@
 {% extends 'layout.html' %}
 {% block content %}
-<h3>批次 {{ batch_id }}</h3>
-<pre id="detail"></pre>
+<div class="d-flex justify-content-between align-items-center mb-2">
+	<h3 class="mb-0">批次 {{ batch_id }}</h3>
+	<div class="btn-group btn-group-sm">
+		<a class="btn btn-outline-secondary" id="btnExport" target="_blank">导出</a>
+		<button class="btn btn-outline-primary" onclick="postAct('retry')">重试失败</button>
+		<button class="btn btn-outline-warning" onclick="postAct('pause')">暂停</button>
+		<button class="btn btn-outline-success" onclick="postAct('resume')">恢复</button>
+		<button class="btn btn-outline-danger" onclick="postAct('cancel')">取消</button>
+	</div>
+</div>
+
+<div class="card mb-3">
+	<div class="card-body">
+		<div id="summary" class="row g-3 small"></div>
+	</div>
+</div>
+
+<div class="card">
+	<div class="card-body">
+		<div class="row g-2 align-items-end mb-2">
+			<div class="col-auto"><label class="form-label">状态</label><input id="qStatus" class="form-control form-control-sm" placeholder="pending/sent/success/fail"></div>
+			<div class="col-auto"><label class="form-label">设备ID</label><input id="qDevice" class="form-control form-control-sm" placeholder="device_id"></div>
+			<div class="col-auto"><button class="btn btn-outline-secondary btn-sm" onclick="loadItems(1)">查询</button></div>
+		</div>
+		<div class="table-responsive">
+			<table class="table table-sm align-middle">
+				<thead><tr><th>项ID</th><th>设备</th><th>类型</th><th>状态</th><th>发出</th><th>发送</th><th>结果</th><th>错误</th><th>操作</th></tr></thead>
+				<tbody id="tbody"></tbody>
+			</table>
+		</div>
+		<nav><ul class="pagination pagination-sm" id="pager"></ul></nav>
+	</div>
+	</div>
+
 <script>
-const hdr={'X-Role':'admin'}
-fetch(`/api/v1/commands/batches/{{ batch_id }}`,{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('detail').innerText=JSON.stringify(x.data,null,2)})
+const hdr={'X-Role':'admin','Content-Type':'application/json'}
+const bid='{{ batch_id }}'
+let curPage=1, pageSize=50
+function fmtTs(s){ if(!s) return ''; const d=new Date(parseInt(s)*1000); return d.toLocaleString(); }
+function loadSummary(){
+	fetch(`/api/v1/commands/batches/${bid}`,{headers:hdr}).then(r=>r.json()).then(x=>{
+		const d=x.data||{}; const info=d.info||{}; const counts=d.counts||{}
+		document.getElementById('btnExport').href=`/api/v1/commands/batches/${bid}/export`
+		const html = `
+			<div class='col'>
+				<div><b>类型</b>：${info.type||''}</div>
+				<div><b>状态</b>：${info.status||'queued'} ${info.paused==='1'?'<span class="badge text-bg-warning">暂停</span>':''}</div>
+			</div>
+			<div class='col'>
+				<div><b>创建时间</b>：${fmtTs(info.created_ts)}</div>
+				<div><b>总数</b>：${info.count_total||0}</div>
+			</div>
+			<div class='col'>
+				<div><b>计数</b>：S:${counts.success||0} / F:${counts.fail||0} / Sent:${counts.sent||0} / Pending:${counts.pending||0}</div>
+				<div><b>操作者</b>：${info.creator||''}</div>
+			</div>
+			<div class='col-12'><b>备注</b>：${info.note||''}</div>`
+		document.getElementById('summary').innerHTML=html
+	})
+}
+function loadItems(page){
+	curPage=page||curPage
+	const p=new URLSearchParams({page:curPage,page_size:pageSize})
+	const st=document.getElementById('qStatus').value.trim(); if(st) p.set('status',st)
+	const did=document.getElementById('qDevice').value.trim(); if(did) p.set('device_id',did)
+	fetch(`/api/v1/commands/batches/${bid}/items?`+p.toString(),{headers:hdr}).then(r=>r.json()).then(x=>{
+		const data=x.data||{}; const items=data.items||[]
+		const rows = items.map(it=>{
+			const id=it.item_id; const st=it.status||''
+			return `<tr>
+				<td>${id}</td>
+				<td>${it.device_id}</td>
+				<td>${it.type||''}</td>
+				<td>${st}</td>
+				<td>${fmtTs(it.issued_ts)}</td>
+				<td>${fmtTs(it.sent_ts)}</td>
+				<td>${fmtTs(it.result_ts)}</td>
+				<td class='text-truncate' style='max-width:320px' title='${(it.last_error||'').replaceAll("'","&#39;")}' >${it.last_error||''}</td>
+				<td>
+					${st==='fail'? `<button class='btn btn-outline-primary btn-sm' onclick="retryItem('${id}')">重试</button>`:''}
+				</td>
+			</tr>`
+		}).join('')
+		document.getElementById('tbody').innerHTML = rows || `<tr><td colspan='9' class='text-center text-muted'>暂无数据</td></tr>`
+		renderPager(data.total||0, data.page||1, data.page_size||pageSize)
+	})
+}
+function renderPager(total,page,ps){
+	const pages=Math.ceil(total/ps)||1
+	let html='';
+	for(let i=1;i<=pages;i++){
+		html+=`<li class='page-item ${i===page?'active':''}'><a class='page-link' href='javascript:void(0)' onclick='loadItems(${i})'>${i}</a></li>`
+	}
+	document.getElementById('pager').innerHTML=html
+}
+function postAct(act){
+	fetch(`/api/v1/commands/batches/${bid}/${act}`,{method:'POST',headers:hdr,body:'{}'}).then(()=>{loadSummary(); loadItems(1)})
+}
+function retryItem(id){
+	fetch(`/api/v1/commands/batches/${bid}/items/${id}/retry`,{method:'POST',headers:hdr,body:'{}'}).then(()=>loadItems())
+}
+loadSummary(); loadItems(1)
+// auto-refresh every 10s
+setInterval(()=>{loadSummary(); loadItems()}, 10000)
 </script>
 {% endblock %}

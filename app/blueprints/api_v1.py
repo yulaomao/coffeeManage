@@ -72,6 +72,82 @@ def device_orders(device_id):
     et = int(end_ts) if end_ts else None
     return ok(OrderService.list_device_orders(device_id, limit=limit, start_ts=st, end_ts=et, offset=offset))
 
+# Global Orders APIs
+@api_v1_bp.get("/orders")
+@require_role(["admin", "ops", "viewer"]) 
+def orders_list():
+    args = request.args
+    filters = {
+        'from': args.get('from'),
+        'to': args.get('to'),
+        'device_id': args.get('device_id'),
+        'order_id': args.get('order_id'),
+        'pay_status': args.get('pay_status'),
+        'status': args.get('status'),
+        'channel': args.get('channel'),
+        'recipe_id': args.get('recipe_id'),
+        'q': args.get('q'),
+        'min_amount': args.get('min_amount'),
+        'max_amount': args.get('max_amount'),
+    }
+    page = int(args.get('page', 1))
+    page_size = int(args.get('page_size', 50))
+    return ok(OrderService.list_orders(filters, page=page, page_size=page_size))
+
+@api_v1_bp.get("/orders/stats")
+@require_role(["admin", "ops", "viewer"]) 
+def orders_stats():
+    args = request.args
+    filters = {
+        'from': args.get('from'),
+        'to': args.get('to'),
+        'device_id': args.get('device_id'),
+        'order_id': args.get('order_id'),
+        'pay_status': args.get('pay_status'),
+        'status': args.get('status'),
+        'channel': args.get('channel'),
+        'recipe_id': args.get('recipe_id'),
+        'q': args.get('q'),
+        'min_amount': args.get('min_amount'),
+        'max_amount': args.get('max_amount'),
+    }
+    return ok(OrderService.stats(filters))
+
+@api_v1_bp.get("/orders/export")
+@require_role(["admin", "ops"]) 
+def orders_export():
+    args = request.args
+    filters = {
+        'from': args.get('from'),
+        'to': args.get('to'),
+        'device_id': args.get('device_id'),
+        'order_id': args.get('order_id'),
+        'pay_status': args.get('pay_status'),
+        'status': args.get('status'),
+        'channel': args.get('channel'),
+        'recipe_id': args.get('recipe_id'),
+        'q': args.get('q'),
+        'min_amount': args.get('min_amount'),
+        'max_amount': args.get('max_amount'),
+    }
+    fmt = (args.get('format') or 'csv').lower()
+    content, mime, filename = OrderService.export(filters, fmt)
+    return Response(content, mimetype=mime, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+@api_v1_bp.get("/orders/<order_id>")
+@require_role(["admin", "ops", "viewer"]) 
+def order_get(order_id):
+    return ok(OrderService.get(order_id))
+
+@api_v1_bp.post("/orders/<order_id>/refund")
+@require_role(["admin", "ops"]) 
+def order_refund(order_id):
+    actor = request.headers.get('X-Role') or 'admin'
+    try:
+        return ok(OrderService.refund(order_id, actor))
+    except KeyError:
+        return err("NOT_FOUND", 404)
+
 @api_v1_bp.get("/devices/<device_id>/orders/export")
 @require_role(["admin", "ops", "viewer"]) 
 def device_orders_export(device_id):
@@ -456,12 +532,85 @@ def dispatch_batch():
 @api_v1_bp.get("/commands/batches")
 @require_role(["admin", "ops", "viewer"]) 
 def list_batches():
-    return ok(CommandService.list_batches())
+    args = request.args
+    return ok(CommandService.list_batches(
+        from_ts=args.get('from'), to_ts=args.get('to'), type=args.get('type'), status=args.get('status'),
+        creator=args.get('creator'), tag=args.get('tag'), q=args.get('q'), page=int(args.get('page',1)), page_size=int(args.get('page_size',20))
+    ))
 
 @api_v1_bp.get("/commands/batches/<batch_id>")
 @require_role(["admin", "ops", "viewer"]) 
 def get_batch(batch_id):
     return ok(CommandService.get_batch(batch_id))
+
+@api_v1_bp.get("/commands/batches/<batch_id>/items")
+@require_role(["admin", "ops", "viewer"]) 
+def get_batch_items(batch_id):
+    args = request.args
+    return ok(CommandService.list_batch_items(batch_id, status=args.get('status'), device_id=args.get('device_id'), page=int(args.get('page',1)), page_size=int(args.get('page_size',50))))
+
+@api_v1_bp.get("/commands/batches/<batch_id>/export")
+@require_role(["admin", "ops"]) 
+def export_batch(batch_id):
+    fmt = (request.args.get('format') or 'csv').lower()
+    content, mime, filename = CommandService.export_batch(batch_id, fmt)
+    return Response(content, mimetype=mime, headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+@api_v1_bp.post("/commands/batches")
+@require_role(["admin", "ops"]) 
+def create_batch():
+    body = request.json or {}
+    batch_type = body.get('type') or body.get('command_type')
+    device_ids = body.get('device_ids') or []
+    payload = body.get('payload')
+    options = body.get('options') or {}
+    tag = body.get('tag')
+    note = body.get('note')
+    dedup_key = body.get('dedup_key')
+    creator = request.headers.get('X-User') or request.headers.get('X-Role') or 'admin'
+    return ok(CommandService.create_batch(batch_type, device_ids, payload, options, tag, note, dedup_key, creator))
+
+@api_v1_bp.post("/commands/batches/<batch_id>/retry")
+@require_role(["admin", "ops"]) 
+def batch_retry(batch_id):
+    n = CommandService.batch_retry_failed(batch_id)
+    return ok({"retry_count": n})
+
+@api_v1_bp.post("/commands/batches/<batch_id>/cancel")
+@require_role(["admin", "ops"]) 
+def batch_cancel(batch_id):
+    n = CommandService.batch_cancel(batch_id)
+    return ok({"canceled": n})
+
+@api_v1_bp.post("/commands/batches/<batch_id>/pause")
+@require_role(["admin", "ops"]) 
+def batch_pause(batch_id):
+    CommandService.batch_pause(batch_id)
+    return ok()
+
+@api_v1_bp.post("/commands/batches/<batch_id>/resume")
+@require_role(["admin", "ops"]) 
+def batch_resume(batch_id):
+    CommandService.batch_resume(batch_id)
+    return ok()
+
+@api_v1_bp.post("/commands/batches/<batch_id>/concurrency")
+@require_role(["admin", "ops"]) 
+def batch_set_concurrency(batch_id):
+    body = request.json or {}
+    try:
+        c = int(body.get('max_concurrency'))
+    except Exception:
+        return err('INVALID_ARGUMENT:max_concurrency', 400)
+    CommandService.batch_set_concurrency(batch_id, c)
+    return ok()
+
+@api_v1_bp.post("/commands/batches/<batch_id>/items/<item_id>/retry")
+@require_role(["admin", "ops"]) 
+def batch_item_retry(batch_id, item_id):
+    if not CommandService.retry_item(batch_id, item_id):
+        return err('NOT_FOUND', 404)
+    return ok()
 
 # Metrics (very basic placeholders)
 @api_v1_bp.get("/metrics")

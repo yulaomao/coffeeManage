@@ -1,5 +1,277 @@
 {% extends 'layout.html' %}
 {% block content %}
-<h3>订单</h3>
-<p>演示：请在设备详情页查看某设备订单。</p>
+<div class="position-sticky top-0 bg-white pb-2" style="z-index: 100;">
+	<div class="d-flex align-items-center gap-3 pt-2">
+		<h4 class="mb-0">订单管理</h4>
+		<div class="ms-auto d-flex gap-2">
+			<button class="btn btn-sm btn-outline-secondary" onclick="exportByFilter('csv')">导出CSV</button>
+			<button class="btn btn-sm btn-outline-secondary" onclick="exportByFilter('json')">导出JSON</button>
+		</div>
+	</div>
+	<div class="card mt-2"><div class="card-body">
+		<div class="row g-2 align-items-end">
+			<div class="col-12 col-lg-3">
+				<label class="form-label">时间范围</label>
+				<div class="input-group input-group-sm">
+					<input id="fltFrom" class="form-control" placeholder="起始(Unix秒)">
+					<span class="input-group-text">至</span>
+					<input id="fltTo" class="form-control" placeholder="结束(Unix秒)">
+				</div>
+				<div class="mt-1 d-flex gap-1">
+					<button class="btn btn-sm btn-outline-secondary" onclick="quickRange('today')">今天</button>
+					<button class="btn btn-sm btn-outline-secondary" onclick="quickRange('7d')">7天</button>
+					<button class="btn btn-sm btn-outline-secondary" onclick="quickRange('30d')">30天</button>
+				</div>
+			</div>
+			<div class="col-6 col-lg-2">
+				<label class="form-label">设备ID</label>
+				<input id="fltDevice" class="form-control form-control-sm" placeholder="device-001">
+			</div>
+			<div class="col-6 col-lg-2">
+				<label class="form-label">订单ID</label>
+				<input id="fltOrderId" class="form-control form-control-sm" placeholder="精确匹配">
+			</div>
+			<div class="col-6 col-lg-2">
+				<label class="form-label">配方/商品</label>
+				<input id="fltRecipe" class="form-control form-control-sm" placeholder="recipe_id 或关键字">
+			</div>
+			<div class="col-6 col-lg-1">
+				<label class="form-label">支付状态</label>
+				<select id="fltPay" class="form-select form-select-sm">
+					<option value="">全部</option>
+					<option>paid</option><option>pending</option><option>failed</option><option>refunded</option>
+				</select>
+			</div>
+			<div class="col-6 col-lg-1">
+				<label class="form-label">结果</label>
+				<select id="fltStatus" class="form-select form-select-sm">
+					<option value="">全部</option>
+					<option>success</option><option>fail</option><option>canceled</option>
+				</select>
+			</div>
+			<div class="col-6 col-lg-1">
+				<label class="form-label">通道</label>
+				<select id="fltChannel" class="form-select form-select-sm">
+					<option value="">全部</option>
+					<option>wechat</option><option>alipay</option><option>cash</option><option>test</option>
+				</select>
+			</div>
+			<div class="col-6 col-lg-2">
+				<label class="form-label">金额范围(分)</label>
+				<div class="input-group input-group-sm">
+					<input id="fltMin" class="form-control" placeholder="min">
+					<span class="input-group-text">-</span>
+					<input id="fltMax" class="form-control" placeholder="max">
+				</div>
+			</div>
+			<div class="col-12 col-lg-2">
+				<button class="btn btn-sm btn-primary" onclick="load(1)">查询</button>
+				<button class="btn btn-sm btn-outline-secondary" onclick="resetFilters()">重置</button>
+			</div>
+		</div>
+	</div></div>
+</div>
+
+<div class="row g-2 mt-2">
+	<div class="col-12 col-xl-3">
+		<div class="row g-2">
+			<div class="col-6 col-xl-12">
+				<div class="card"><div class="card-body">
+					<div class="text-secondary">订单数</div>
+					<div class="fs-4 fw-semibold" id="mOrders">-</div>
+				</div></div>
+			</div>
+			<div class="col-6 col-xl-12">
+				<div class="card"><div class="card-body">
+					<div class="text-secondary">营收(元)</div>
+					<div class="fs-4 fw-semibold" id="mRevenue">-</div>
+				</div></div>
+			</div>
+			<div class="col-6 col-xl-12">
+				<div class="card"><div class="card-body">
+					<div class="text-secondary">成功率</div>
+					<div class="fs-4 fw-semibold" id="mSucc">-</div>
+				</div></div>
+			</div>
+			<div class="col-6 col-xl-12">
+				<div class="card"><div class="card-body">
+					<div class="text-secondary">退款率</div>
+					<div class="fs-4 fw-semibold" id="mRefund">-</div>
+				</div></div>
+			</div>
+			<div class="col-6 col-xl-12">
+				<div class="card"><div class="card-body">
+					<div class="text-secondary">客单价(ARPU)</div>
+					<div class="fs-4 fw-semibold" id="mArpu">-</div>
+				</div></div>
+			</div>
+		</div>
+	</div>
+	<div class="col-12 col-xl-9">
+		<div class="card"><div class="card-body">
+			<div class="d-flex align-items-center mb-2">
+				<div class="text-secondary">订单列表</div>
+				<div id="bulkBar" class="ms-auto d-none">
+					<div class="btn-group btn-group-sm">
+						<button class="btn btn-outline-secondary" onclick="bulkExport('csv')">批量导出CSV</button>
+						<button class="btn btn-outline-secondary" onclick="bulkExport('json')">批量导出JSON</button>
+						<button class="btn btn-outline-danger" onclick="bulkRefund()">批量退款</button>
+					</div>
+				</div>
+			</div>
+			<div class="table-responsive">
+				<table class="table table-sm align-middle">
+					<thead>
+						<tr>
+							<th><input type="checkbox" id="chkAll" onclick="toggleAll(this.checked)"></th>
+							<th>订单ID</th><th>设备ID</th><th>时间</th><th>相对</th><th>商品/配方</th><th>金额(元)</th><th>通道</th><th>支付</th><th>结果</th><th>时长(ms)</th><th>错误</th><th>操作</th>
+						</tr>
+					</thead>
+					<tbody id="tb"></tbody>
+				</table>
+			</div>
+			<div class="d-flex justify-content-between align-items-center">
+				<div class="small text-muted" id="pgInfo">-</div>
+				<div>
+					<select id="ps" class="form-select form-select-sm d-inline-block" style="width:auto" onchange="load(1)"><option>20</option><option selected>50</option><option>100</option></select>
+					<button class="btn btn-sm btn-outline-secondary" onclick="prev()">上一页</button>
+					<span class="mx-2" id="pg">1/1</span>
+					<button class="btn btn-sm btn-outline-secondary" onclick="next()">下一页</button>
+				</div>
+			</div>
+		</div></div>
+	</div>
+</div>
+
+<script>
+const HDR={'X-Role':'admin','Content-Type':'application/json'}
+let curPage=1, total=0, selected=new Set()
+
+function quickRange(p){
+	const now = Math.floor(Date.now()/1000)
+	const dayStart = new Date(); dayStart.setHours(0,0,0,0); const ds = Math.floor(dayStart.getTime()/1000)
+	if(p==='today'){ document.getElementById('fltFrom').value=String(ds); document.getElementById('fltTo').value=String(now) }
+	if(p==='7d'){ document.getElementById('fltFrom').value=String(now-7*86400); document.getElementById('fltTo').value=String(now) }
+	if(p==='30d'){ document.getElementById('fltFrom').value=String(now-30*86400); document.getElementById('fltTo').value=String(now) }
+	load(1)
+}
+function resetFilters(){ ['fltFrom','fltTo','fltDevice','fltOrderId','fltRecipe','fltMin','fltMax'].forEach(id=>document.getElementById(id).value=''); ['fltPay','fltStatus','fltChannel'].forEach(id=>document.getElementById(id).value=''); load(1) }
+function fmtTs(v){ if(!v) return ''; try{ const n=Number(v); if(!n) return ''; const d=new Date(n*1000); return d.toLocaleString() }catch{return ''} }
+function relTs(v){ if(!v) return ''; try{ const n=Number(v); const diff=Math.floor(Date.now()/1000-n); if(diff<60) return `${diff}s前`; if(diff<3600) return `${Math.floor(diff/60)}m前`; if(diff<86400) return `${Math.floor(diff/3600)}h前`; return `${Math.floor(diff/86400)}d前` }catch{return ''} }
+function moneyYuan(cents){ try{ return (Number(cents||0)/100).toFixed(2) }catch{return ''} }
+
+function getFilters(){
+	const f={}
+	f.from=document.getElementById('fltFrom').value.trim(); f.to=document.getElementById('fltTo').value.trim();
+	f.device_id=document.getElementById('fltDevice').value.trim(); f.order_id=document.getElementById('fltOrderId').value.trim();
+	const kw=document.getElementById('fltRecipe').value.trim(); if(kw){ f.q=kw }
+	f.pay_status=document.getElementById('fltPay').value; f.status=document.getElementById('fltStatus').value; f.channel=document.getElementById('fltChannel').value;
+	f.min_amount=document.getElementById('fltMin').value.trim(); f.max_amount=document.getElementById('fltMax').value.trim();
+	return f
+}
+
+async function load(page){
+	curPage=page||1; const ps=Number(document.getElementById('ps').value||50); const f=getFilters()
+	const q=new URLSearchParams({ ...f, page:String(curPage), page_size:String(ps) })
+	const j = await fetch(`/api/v1/orders?${q.toString()}`,{headers:HDR}).then(r=>r.json()); let d=j.data||{items:[],total:0,page:1,page_size:ps}
+	// Client fallback: if global returns empty and未指定 device_id/order_id，则尝试逐设备聚合，便于定位问题
+	if((d.total||0)===0 && !(f.device_id||'').trim() && !(f.order_id||'').trim()){
+		try{
+			const dj = await fetch(`/api/v1/devices?page=1&page_size=100`,{headers:HDR}).then(r=>r.json());
+			const devices=(dj.data&&dj.data.items)? dj.data.items.map(x=>x.device_id||x.id).filter(Boolean) : []
+			let rows=[]
+			const from=(f.from||'').trim(), to=(f.to||'').trim();
+			const qs = new URLSearchParams({ limit:'200', from, to })
+			for(const did of devices.slice(0, 20)){
+				try{
+					const oj = await fetch(`/api/v1/devices/${encodeURIComponent(did)}/orders?${qs.toString()}`,{headers:HDR}).then(r=>r.json());
+					const arr=oj.data||[]; for(const h of arr){ if(h){ h.device_id=h.device_id||did; h.order_id=h.order_id||h.id } }
+					rows.push(...arr)
+				}catch{ }
+			}
+			// 额外应用过滤
+			const pass = (h)=>{
+				if(f.pay_status && h.pay_status!==f.pay_status) return false;
+				if(f.status && h.status!==f.status) return false;
+				if(f.channel && h.channel!==f.channel) return false;
+				if(f.recipe_id && h.recipe_id!==f.recipe_id) return false;
+				const kw=(f.q||'').trim().toLowerCase(); if(kw){ if(JSON.stringify(h).toLowerCase().indexOf(kw)===-1) return false }
+				const minv=(f.min_amount||'').trim(); if(minv){ if((Number(h.amount_cents||0)) < Number(minv)) return false }
+				const maxv=(f.max_amount||'').trim(); if(maxv){ if((Number(h.amount_cents||0)) > Number(maxv)) return false }
+				return true
+			}
+			rows = rows.filter(pass)
+			// 排序与分页
+			const ordTs = (h)=> Number(h.server_ts||h.device_ts||0)
+			rows.sort((a,b)=> ordTs(b)-ordTs(a))
+			const totalAll = rows.length
+			const s=(curPage-1)*ps, e=s+ps
+			d = { items: rows.slice(s,e), total: totalAll, page: curPage, page_size: ps }
+			console.info('[orders] 使用客户端聚合展示，可能存在性能影响')
+		}catch(e){ console.warn('fallback 聚合失败', e) }
+	}
+	// metrics
+	const s = await fetch(`/api/v1/orders/stats?${new URLSearchParams(f).toString()}`,{headers:HDR}).then(r=>r.json()).then(x=>x.data||{})
+	document.getElementById('mOrders').innerText=s.total??'-'
+	document.getElementById('mRevenue').innerText=(s.revenue!=null? s.revenue : '-')
+	document.getElementById('mSucc').innerText=(s.success_rate!=null? s.success_rate+'%' : '-')
+	document.getElementById('mRefund').innerText=(s.refund_rate!=null? s.refund_rate+'%' : '-')
+	document.getElementById('mArpu').innerText=(s.arpu!=null? s.arpu : '-')
+
+	const tb=document.getElementById('tb'); tb.innerHTML=''; selected.clear();
+	for(const h of (d.items||[])){
+		const oid=h.order_id||h.id||''; const did=h.device_id||''; const ts=h.server_ts||h.device_ts||'';
+		const tr=document.createElement('tr')
+		tr.innerHTML = `
+			<td><input type='checkbox' ${selected.has(oid)?'checked':''} onclick="toggle('${oid}', this.checked)"></td>
+			<td class='text-truncate' style='max-width:140px' title='${oid}'>${oid}</td>
+			<td><a href='/devices/${did}' target='_blank'>${did}</a></td>
+			<td>${fmtTs(ts)}</td>
+			<td>${relTs(ts)}</td>
+			<td>${h.item_name||h.item||h.name||h.recipe_id||''}</td>
+			<td>${moneyYuan(h.amount_cents)}</td>
+			<td>${h.channel||''}</td>
+			<td>${h.pay_status||''}</td>
+			<td>${h.status||''}</td>
+			<td>${h.duration_ms||''}</td>
+			<td class='text-danger'>${h.err_code||''} ${h.err_msg||''}</td>
+			<td>
+				<div class='btn-group btn-group-sm'>
+					<button class='btn btn-outline-secondary' onclick="viewDetail('${encodeURIComponent(oid)}')">详情</button>
+					<button class='btn btn-outline-danger' onclick="refundOne('${encodeURIComponent(oid)}')">退款</button>
+				</div>
+			</td>`
+		tb.appendChild(tr)
+	}
+	total=d.total||0; const pages=Math.max(1, Math.ceil(total/ps)); document.getElementById('pg').innerText=`${d.page}/${pages}`; document.getElementById('pgInfo').innerText=`共 ${total} 条`
+	updateBulkBar()
+}
+
+function prev(){ if(curPage>1) load(curPage-1) } function next(){ const ps=Number(document.getElementById('ps').value||50); const pages=Math.max(1, Math.ceil(total/ps)); if(curPage<pages) load(curPage+1) }
+
+function toggle(id,on){ if(on){selected.add(id)} else {selected.delete(id)} updateBulkBar() } function toggleAll(on){ const cbs=[...document.querySelectorAll('#tb input[type=checkbox]')]; cbs.forEach(cb=>{cb.checked=on; const id=cb.closest('tr').children[1].innerText; if(on) selected.add(id); else selected.delete(id)}); updateBulkBar() }
+function updateBulkBar(){ document.getElementById('bulkBar').classList.toggle('d-none', selected.size===0) }
+
+async function exportByFilter(fmt){ const f=getFilters(); const q=new URLSearchParams({ ...f, format:fmt }); const resp = await fetch(`/api/v1/orders/export?${q.toString()}`,{headers:HDR}); const blob=await resp.blob(); const a=document.createElement('a'); const ext=fmt==='json'?'json':'csv'; a.href=URL.createObjectURL(blob); a.download=`orders.${ext}`; a.click(); URL.revokeObjectURL(a.href) }
+async function bulkExport(fmt){ if(selected.size===0) return; // lightweight: fetch details and build on client
+	const arr=[...selected]; let rows=[]; for(const id of arr){ const j=await fetch(`/api/v1/orders/${encodeURIComponent(id)}`,{headers:HDR}).then(r=>r.json()); if(j&&j.data) rows.push(j.data) }
+	if(fmt==='json'){ const blob=new Blob([JSON.stringify(rows,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='orders-selected.json'; a.click(); URL.revokeObjectURL(a.href); return }
+	// csv
+	const headers=new Set(); rows.forEach(r=>{Object.keys(r||{}).forEach(k=>headers.add(k))}); const preferred=["order_id","device_id","status","pay_status","channel","amount_cents","server_ts","device_ts"]; const cols=[...preferred.filter(c=>headers.has(c)), ...[...headers].filter(h=>!preferred.includes(h)).sort()];
+	const sio=[]; sio.push(cols.join(',')); rows.forEach(r=>{ sio.push(cols.map(c=> (r[c]??'')).join(','))}); const blob=new Blob([sio.join('\n')],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='orders-selected.csv'; a.click(); URL.revokeObjectURL(a.href)
+}
+
+async function viewDetail(encId){ const id=decodeURIComponent(encId); const j=await fetch(`/api/v1/orders/${encodeURIComponent(id)}`,{headers:HDR}).then(r=>r.json()); const d=j.data||{}; showOrderDetail(d) }
+async function refundOne(encId){ const id=decodeURIComponent(encId); if(!confirm('确认退款该订单？')) return; const j=await fetch(`/api/v1/orders/${encodeURIComponent(id)}/refund`,{method:'POST',headers:HDR}).then(r=>r.json()); if(j.ok){ cmToast('已标记退款','success'); load(curPage) } else { cmToast('退款失败: '+j.error,'error') } }
+async function bulkRefund(){ if(selected.size===0) return; if(!confirm('确认批量退款选中订单？')) return; for(const id of selected){ await fetch(`/api/v1/orders/${encodeURIComponent(id)}/refund`,{method:'POST',headers:HDR}) } cmToast('批量退款完成','success'); load(curPage) }
+
+function showOrderDetail(d){
+	const html = `<div class='offcanvas offcanvas-end' tabindex='-1' id='orderDetail'><div class='offcanvas-header'><h5 class='offcanvas-title'>订单 ${d.order_id||''}</h5><button type='button' class='btn-close' data-bs-dismiss='offcanvas'></button></div><div class='offcanvas-body'><pre style='white-space:pre-wrap;word-break:break-all'>${escapeHtml(JSON.stringify(d,null,2))}</pre><div class='text-end'><button class='btn btn-sm btn-outline-secondary' onclick='copyText(${JSON.stringify(JSON.stringify(d))})'>复制JSON</button></div></div></div>`
+	const el=document.getElementById('orderDetail'); if(el) el.remove(); document.body.insertAdjacentHTML('beforeend', html); new bootstrap.Offcanvas('#orderDetail').show()
+}
+function escapeHtml(str){ return str.replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[s]) }
+function copyText(t){ try{ navigator.clipboard.writeText(t); cmToast('已复制','success')}catch{} }
+
+load(1)
+</script>
 {% endblock %}

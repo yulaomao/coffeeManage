@@ -1,10 +1,95 @@
 {% extends 'layout.html' %}
 {% block content %}
-<h3>下发中心</h3>
-<ul id="list" class="list-group"></ul>
+<div class="d-flex justify-content-between align-items-center mb-3">
+	<h3 class="mb-0">下发中心</h3>
+	<div>
+		<button class="btn btn-primary btn-sm" onclick="openCreate()">新建批次</button>
+	</div>
+	</div>
+
+<div class="card mb-3">
+	<div class="card-body row g-2 align-items-end">
+		<div class="col-auto"><label class="form-label">类型</label><input id="qType" class="form-control form-control-sm" placeholder="command_type"></div>
+		<div class="col-auto"><label class="form-label">状态</label><input id="qStatus" class="form-control form-control-sm" placeholder="queued/sent/success/fail/canceled"></div>
+		<div class="col-auto"><label class="form-label">标签</label><input id="qTag" class="form-control form-control-sm" placeholder="tag"></div>
+		<div class="col-auto"><label class="form-label">搜索</label><input id="qText" class="form-control form-control-sm" placeholder="任意关键词"></div>
+		<div class="col-auto"><button class="btn btn-outline-secondary btn-sm" onclick="load(1)">查询</button></div>
+	</div>
+</div>
+
+<div class="table-responsive">
+	<table class="table table-sm align-middle">
+		<thead>
+			<tr>
+				<th>批次ID</th><th>类型</th><th>创建时间</th><th>状态</th><th>计数</th><th>操作者</th><th>标签</th><th>操作</th>
+			</tr>
+		</thead>
+		<tbody id="tbody"></tbody>
+	</table>
+</div>
+<nav><ul class="pagination pagination-sm" id="pager"></ul></nav>
+
 <script>
 const hdr={'X-Role':'admin','Content-Type':'application/json'}
-function load(){fetch('/api/v1/commands/batches',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(b=>`<li class='list-group-item'><a href='/dispatch/${b.id||b.batch_id}'>${b.id||b.batch_id}</a></li>`).join('')})}
-load()
+let curPage=1, pageSize=20
+function fmtTs(s){ if(!s) return ''; const d=new Date(parseInt(s)*1000); return d.toLocaleString(); }
+function load(page){
+	curPage=page||curPage
+	const p = new URLSearchParams({page:curPage,page_size:pageSize})
+	const t=document.getElementById('qType').value.trim(); if(t) p.set('type',t)
+	const st=document.getElementById('qStatus').value.trim(); if(st) p.set('status',st)
+	const tag=document.getElementById('qTag').value.trim(); if(tag) p.set('tag',tag)
+	const q=document.getElementById('qText').value.trim(); if(q) p.set('q',q)
+	fetch('/api/v1/commands/batches?'+p.toString(),{headers:hdr}).then(r=>r.json()).then(x=>{
+		const data=x.data||{}; const items=data.items||[]
+		const rows = items.map(b=>{
+			const id=b.id||b.batch_id; const cntTotal = b.count_total||0
+			const cnts = `S:${b.count_success||0}/F:${b.count_fail||0}/P:${b.count_pending||0}`
+			const st=b.status||'queued';
+			const paused = (b.paused==='1')?'<span class="badge text-bg-warning">暂停</span>':''
+			return `<tr>
+				<td><a href='/dispatch/${id}'>${id}</a></td>
+				<td>${b.type||''}</td>
+				<td>${fmtTs(b.created_ts)}</td>
+				<td>${st} ${paused}</td>
+				<td>${cnts} / T:${cntTotal}</td>
+				<td>${b.creator||''}</td>
+				<td>${b.tag||''}</td>
+				<td>
+					<div class='btn-group btn-group-sm'>
+						<a class='btn btn-outline-secondary' href='/api/v1/commands/batches/${id}/export' target='_blank'>导出</a>
+						<button class='btn btn-outline-primary' onclick="postAct('${id}','retry')">重试失败</button>
+						<button class='btn btn-outline-warning' onclick="postAct('${id}','pause')">暂停</button>
+						<button class='btn btn-outline-success' onclick="postAct('${id}','resume')">恢复</button>
+						<button class='btn btn-outline-danger' onclick="postAct('${id}','cancel')">取消</button>
+					</div>
+				</td>
+			</tr>`
+		}).join('')
+		document.getElementById('tbody').innerHTML = rows || `<tr><td colspan='8' class='text-center text-muted'>暂无数据</td></tr>`
+		renderPager(data.total||0, data.page||1, data.page_size||pageSize)
+	})
+}
+function renderPager(total,page,ps){
+	const pages=Math.ceil(total/ps)||1
+	let html='';
+	for(let i=1;i<=pages;i++){
+		html+=`<li class='page-item ${i===page?'active':''}'><a class='page-link' href='javascript:void(0)' onclick='load(${i})'>${i}</a></li>`
+	}
+	document.getElementById('pager').innerHTML=html
+}
+function postAct(id,act){
+	fetch(`/api/v1/commands/batches/${id}/${act}`,{method:'POST',headers:hdr,body:'{}'}).then(r=>r.json()).then(_=>load())
+}
+function openCreate(){
+	const device_ids = prompt('输入设备ID，逗号分隔:')||''
+	if(!device_ids.trim()) return
+	const type = prompt('输入命令类型:')||''
+	if(!type) return
+	const payloadText = prompt('输入JSON负载，可留空:')||''
+	let payload=null; try{ payload = payloadText? JSON.parse(payloadText): null }catch(e){ alert('JSON无效'); return }
+	fetch('/api/v1/commands/batches',{method:'POST',headers:hdr,body:JSON.stringify({type, device_ids: device_ids.split(',').map(s=>s.trim()).filter(Boolean), payload})}).then(r=>r.json()).then(_=>load(1))
+}
+load(1)
 </script>
 {% endblock %}

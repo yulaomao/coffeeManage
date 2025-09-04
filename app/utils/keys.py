@@ -65,6 +65,14 @@ def k_order(device_id: str, order_id: str) -> str:
 def k_orders_by_ts(device_id: str) -> str:
     return f"cm:dev:{device_id}:orders:by_ts"
 
+# Global Orders indices
+def k_orders_global_by_ts() -> str:
+    return "cm:orders:by_ts"
+
+def k_order_index(order_id: str) -> str:
+    # Map order_id -> device_id to help locate the order quickly
+    return f"cm:order:index:{order_id}"
+
 # Materials / Recipes / Packages (dict)
 def k_dict_recipe(recipe_id: str) -> str:
     return f"cm:dict:recipe:{recipe_id}"
