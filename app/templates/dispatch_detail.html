@@ -102,7 +102,17 @@ function retryItem(id){
 	fetch(`/api/v1/commands/batches/${bid}/items/${id}/retry`,{method:'POST',headers:hdr,body:'{}'}).then(()=>loadItems())
 }
 loadSummary(); loadItems(1)
-// auto-refresh every 10s
-setInterval(()=>{loadSummary(); loadItems()}, 10000)
+// SSE first, fallback polling
+let es
+function startSSE(){
+	try{
+		es = new EventSource(`/api/v1/commands/batches/${bid}/sse`)
+		es.addEventListener('batch', (ev)=>{ try{ const j=JSON.parse(ev.data||'{}'); if(j.info){ loadSummary(); loadItems() } }catch{} })
+		es.onerror = ()=>{ try{ es.close() }catch{}; startPolling() }
+	}catch{ startPolling() }
+}
+let pollTimer
+function startPolling(){ clearInterval(pollTimer); pollTimer = setInterval(()=>{loadSummary(); loadItems()}, 10000) }
+startSSE()
 </script>
 {% endblock %}

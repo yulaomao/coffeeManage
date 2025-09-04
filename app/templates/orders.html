@@ -1,6 +1,6 @@
 {% extends 'layout.html' %}
 {% block content %}
-<div class="position-sticky top-0 bg-white pb-2" style="z-index: 100;">
+<div class="position-sticky top-0 pb-2" style="z-index: 100;">
 	<div class="d-flex align-items-center gap-3 pt-2">
 		<h4 class="mb-0">订单管理</h4>
 		<div class="ms-auto d-flex gap-2">
@@ -8,7 +8,7 @@
 			<button class="btn btn-sm btn-outline-secondary" onclick="exportByFilter('json')">导出JSON</button>
 		</div>
 	</div>
-	<div class="card mt-2"><div class="card-body">
+	<div class="filterbar mt-2">
 		<div class="row g-2 align-items-end">
 			<div class="col-12 col-lg-3">
 				<label class="form-label">时间范围</label>
@@ -69,7 +69,7 @@
 				<button class="btn btn-sm btn-outline-secondary" onclick="resetFilters()">重置</button>
 			</div>
 		</div>
-	</div></div>
+	</div>
 </div>
 
 <div class="row g-2 mt-2">
@@ -146,6 +146,7 @@
 <script>
 const HDR={'X-Role':'admin','Content-Type':'application/json'}
 let curPage=1, total=0, selected=new Set()
+let loading=false
 
 function quickRange(p){
 	const now = Math.floor(Date.now()/1000)
@@ -172,6 +173,8 @@ function getFilters(){
 
 async function load(page){
 	curPage=page||1; const ps=Number(document.getElementById('ps').value||50); const f=getFilters()
+	// skeleton
+	renderSkeleton()
 	const q=new URLSearchParams({ ...f, page:String(curPage), page_size:String(ps) })
 	const j = await fetch(`/api/v1/orders?${q.toString()}`,{headers:HDR}).then(r=>r.json()); let d=j.data||{items:[],total:0,page:1,page_size:ps}
 	// Client fallback: if global returns empty and未指定 device_id/order_id，则尝试逐设备聚合，便于定位问题
@@ -219,8 +222,14 @@ async function load(page){
 	document.getElementById('mArpu').innerText=(s.arpu!=null? s.arpu : '-')
 
 	const tb=document.getElementById('tb'); tb.innerHTML=''; selected.clear();
+	if(!d.items || d.items.length===0){
+		tb.innerHTML = `<tr><td colspan='13' class='empty'>无数据</td></tr>`
+	}
 	for(const h of (d.items||[])){
 		const oid=h.order_id||h.id||''; const did=h.device_id||''; const ts=h.server_ts||h.device_ts||'';
+		// 统一名称优先级：name_i18n_json[zh-CN] > item_name > item > name > recipe_id
+		let displayName = h.item_name||h.item||h.name||h.recipe_id||'';
+		try{ if(h.name_i18n_json){ const i18n = (typeof h.name_i18n_json==='string'? JSON.parse(h.name_i18n_json): h.name_i18n_json); displayName = i18n['zh-CN']||i18n['zh']||i18n['cn']||displayName } }catch{}
 		const tr=document.createElement('tr')
 		tr.innerHTML = `
 			<td><input type='checkbox' ${selected.has(oid)?'checked':''} onclick="toggle('${oid}', this.checked)"></td>
@@ -228,13 +237,13 @@ async function load(page){
 			<td><a href='/devices/${did}' target='_blank'>${did}</a></td>
 			<td>${fmtTs(ts)}</td>
 			<td>${relTs(ts)}</td>
-			<td>${h.item_name||h.item||h.name||h.recipe_id||''}</td>
+			<td class='text-truncate' style='max-width:200px' title='${displayName}'>${displayName}</td>
 			<td>${moneyYuan(h.amount_cents)}</td>
 			<td>${h.channel||''}</td>
 			<td>${h.pay_status||''}</td>
 			<td>${h.status||''}</td>
 			<td>${h.duration_ms||''}</td>
-			<td class='text-danger'>${h.err_code||''} ${h.err_msg||''}</td>
+			<td class='text-danger text-truncate' style='max-width:220px' title='${(h.err_code||'')+' '+(h.err_msg||'')}'>${h.err_code||''} ${h.err_msg||''}</td>
 			<td>
 				<div class='btn-group btn-group-sm'>
 					<button class='btn btn-outline-secondary' onclick="viewDetail('${encodeURIComponent(oid)}')">详情</button>
@@ -266,12 +275,42 @@ async function refundOne(encId){ const id=decodeURIComponent(encId); if(!confirm
 async function bulkRefund(){ if(selected.size===0) return; if(!confirm('确认批量退款选中订单？')) return; for(const id of selected){ await fetch(`/api/v1/orders/${encodeURIComponent(id)}/refund`,{method:'POST',headers:HDR}) } cmToast('批量退款完成','success'); load(curPage) }
 
 function showOrderDetail(d){
-	const html = `<div class='offcanvas offcanvas-end' tabindex='-1' id='orderDetail'><div class='offcanvas-header'><h5 class='offcanvas-title'>订单 ${d.order_id||''}</h5><button type='button' class='btn-close' data-bs-dismiss='offcanvas'></button></div><div class='offcanvas-body'><pre style='white-space:pre-wrap;word-break:break-all'>${escapeHtml(JSON.stringify(d,null,2))}</pre><div class='text-end'><button class='btn btn-sm btn-outline-secondary' onclick='copyText(${JSON.stringify(JSON.stringify(d))})'>复制JSON</button></div></div></div>`
+		const html = `<div class='offcanvas offcanvas-end' tabindex='-1' id='orderDetail' aria-labelledby='orderDetailTitle'>
+			<div class='offcanvas-header'><h5 id='orderDetailTitle' class='offcanvas-title'>订单 ${d.order_id||''}</h5>
+				<button type='button' class='btn-close' data-bs-dismiss='offcanvas' aria-label='关闭'></button></div>
+			<div class='offcanvas-body'>
+				<pre style='white-space:pre-wrap;word-break:break-all'>${escapeHtml(JSON.stringify(d,null,2))}</pre>
+			</div>
+			<div class='border-top d-flex justify-content-end gap-2 p-2'>
+				<button class='btn btn-sm btn-outline-secondary' onclick='copyText(${JSON.stringify(JSON.stringify(d))})'>复制JSON</button>
+			</div>
+		</div>`
 	const el=document.getElementById('orderDetail'); if(el) el.remove(); document.body.insertAdjacentHTML('beforeend', html); new bootstrap.Offcanvas('#orderDetail').show()
 }
 function escapeHtml(str){ return str.replace(/[&<>"']/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[s]) }
 function copyText(t){ try{ navigator.clipboard.writeText(t); cmToast('已复制','success')}catch{} }
 
 load(1)
+
+function renderSkeleton(){
+	const tb=document.getElementById('tb'); if(!tb) return; const rows=[]; for(let i=0;i<8;i++){
+		rows.push(`<tr>
+			<td class='skeleton' style='height:16px;width:16px'></td>
+			<td><div class='skeleton' style='height:16px;width:120px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:120px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:140px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:60px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:180px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:60px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:60px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:60px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:60px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:70px'></div></td>
+			<td><div class='skeleton' style='height:16px;width:160px'></div></td>
+			<td><div class='skeleton' style='height:28px;width:120px'></div></td>
+		</tr>`)
+	}
+	tb.innerHTML = rows.join('')
+}
 </script>
 {% endblock %}

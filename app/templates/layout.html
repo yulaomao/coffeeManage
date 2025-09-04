@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{ title or 'Coffee Manager' }}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="/static/css/theme.css">
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
@@ -27,6 +29,10 @@
         <li class="nav-item"><a class="nav-link" href="/tasks">任务</a></li>
         <li class="nav-item"><a class="nav-link" href="/audit">审计</a></li>
       </ul>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm toolbar-btn" onclick="cmUI.toggleTheme()" aria-label="切换主题"><i class="bi bi-circle-half"></i></button>
+        <button class="btn btn-sm toolbar-btn" onclick="cmUI.toggleDensity()" aria-label="切换密度"><i class="bi bi-arrows-expand"></i></button>
+      </div>
     </div>
   </div>
 </nav>
@@ -35,6 +41,7 @@
   {% block content %}{% endblock %}
 </main>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/static/js/ui.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

@@ -11,6 +11,7 @@ from ..services.alarms import AlarmService
 from ..utils.rbac import require_role
 from ..utils.extensions import redis_cli
 from ..utils.keys import k_menu_meta
+import json, time
 
 api_v1_bp = Blueprint("api_v1", __name__)
 
@@ -611,6 +612,21 @@ def batch_item_retry(batch_id, item_id):
     if not CommandService.retry_item(batch_id, item_id):
         return err('NOT_FOUND', 404)
     return ok()
+
+@api_v1_bp.get("/commands/batches/<batch_id>/sse")
+@require_role(["admin", "ops", "viewer"]) 
+def batch_sse(batch_id):
+    def gen():
+        # naive polling push, 2s interval, ~4 minutes
+        for _ in range(120):
+            try:
+                data = CommandService.get_batch(batch_id)
+                payload = json.dumps(data, ensure_ascii=False)
+                yield f"event: batch\n" + f"data: {payload}\n\n"
+            except Exception as e:
+                yield f"event: error\n" + f"data: {str(e)}\n\n"
+            time.sleep(2)
+    return Response(gen(), mimetype='text/event-stream')
 
 # Metrics (very basic placeholders)
 @api_v1_bp.get("/metrics")
