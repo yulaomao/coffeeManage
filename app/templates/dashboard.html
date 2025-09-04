@@ -335,17 +335,41 @@ async function loadBatches() {
   try {
     const r = await fetch('/api/v1/commands/batches?limit=5', {headers: hdr});
     const j = await r.json();
-    const batches = j.data || [];
+    const data = j.data || {};
+    const batches = data.items || []; // Fix: handle the proper data structure
     
     const container = $('command-batches');
+    if (!container) return;
+    
     container.innerHTML = '';
     
     batches.forEach(batch => {
       const batchElement = createBatchElement(batch);
       container.appendChild(batchElement);
     });
+    
+    // Show placeholder if no batches
+    if (batches.length === 0) {
+      container.innerHTML = `
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-inbox fs-1 mb-2 d-block"></i>
+          <div>暂无命令批次</div>
+          <small>点击"新建批次"开始</small>
+        </div>
+      `;
+    }
   } catch(e) {
     console.error('Failed to load batches:', e);
+    const container = $('command-batches');
+    if (container) {
+      container.innerHTML = `
+        <div class="text-center text-danger py-4">
+          <i class="bi bi-exclamation-triangle fs-1 mb-2 d-block"></i>
+          <div>加载失败</div>
+          <small>${e.message}</small>
+        </div>
+      `;
+    }
   }
 }
 
