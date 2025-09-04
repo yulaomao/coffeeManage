@@ -5,12 +5,16 @@ from ..utils.keys import k_order, k_orders_by_ts, ts
 
 class OrderService:
     @staticmethod
-    def list_device_orders(device_id: str, limit: int = 50, start_ts: int | None = None, end_ts: int | None = None):
+    def list_device_orders(device_id: str, limit: int = 50, start_ts: int | None = None, end_ts: int | None = None, offset: int = 0):
         r = redis_cli.r
         key = k_orders_by_ts(device_id)
         start = "-inf" if not start_ts else start_ts
         end = "+inf" if not end_ts else end_ts
-        ids = r.zrevrangebyscore(key, end, start, start=0, num=limit)
+        try:
+            off = max(0, int(offset or 0))
+        except Exception:
+            off = 0
+        ids = r.zrevrangebyscore(key, end, start, start=off, num=limit)
         res = []
         for oid in ids:
             res.append(r.hgetall(k_order(device_id, oid)))

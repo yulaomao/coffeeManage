@@ -1,4 +1,4 @@
-from flask import Blueprint, request
+from flask import Blueprint, request, Response
 from ..services.devices import DeviceService
 from ..services.menu import MenuService
 from ..services.commands import CommandService
@@ -7,6 +7,7 @@ from ..services.materials import MaterialService
 from ..services.recipes import RecipeService
 from ..services.audit import AuditService
 from ..services.packages import PackageService
+from ..services.alarms import AlarmService
 from ..utils.rbac import require_role
 from ..utils.extensions import redis_cli
 from ..utils.keys import k_menu_meta
@@ -47,7 +48,11 @@ def device_summary(device_id):
 @api_v1_bp.get("/devices")
 @require_role(["admin", "ops", "viewer"]) 
 def devices_list():
-    return ok(DeviceService.list_devices())
+    status = request.args.get('status')
+    query = request.args.get('query')
+    page = request.args.get('page', 1)
+    page_size = request.args.get('page_size', 20)
+    return ok(DeviceService.list_devices(status=status, query=query, page=int(page), page_size=int(page_size)))
 
 @api_v1_bp.post("/devices/<device_id>/sync_state")
 @require_role(["admin", "ops"]) 
@@ -60,11 +65,48 @@ def sync_state(device_id):
 @require_role(["admin", "ops", "viewer"]) 
 def device_orders(device_id):
     limit = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
     start_ts = request.args.get("from")
     end_ts = request.args.get("to")
     st = int(start_ts) if start_ts else None
     et = int(end_ts) if end_ts else None
-    return ok(OrderService.list_device_orders(device_id, limit=limit, start_ts=st, end_ts=et))
+    return ok(OrderService.list_device_orders(device_id, limit=limit, start_ts=st, end_ts=et, offset=offset))
+
+@api_v1_bp.get("/devices/<device_id>/orders/export")
+@require_role(["admin", "ops", "viewer"]) 
+def device_orders_export(device_id):
+    fmt = (request.args.get("format") or "csv").lower()
+    start_ts = request.args.get("from")
+    end_ts = request.args.get("to")
+    st = int(start_ts) if start_ts else None
+    et = int(end_ts) if end_ts else None
+    rows = OrderService.list_device_orders(device_id, limit=10000, start_ts=st, end_ts=et)
+    if fmt == "json":
+        import json as _json
+        payload = _json.dumps(rows, ensure_ascii=False)
+        return Response(payload, mimetype="application/json", headers={"Content-Disposition": f"attachment; filename=orders-{device_id}.json"})
+    # csv
+    # collect headers
+    headers = set()
+    for r in rows:
+        for k in (r or {}).keys():
+            headers.add(k)
+    preferred = ["order_id", "id", "status", "total_cents", "amount_cents", "server_ts", "device_ts"]
+    cols = [c for c in preferred if c in headers] + sorted([h for h in headers if h not in preferred])
+    # build csv
+    import io, csv
+    sio = io.StringIO()
+    writer = csv.writer(sio)
+    writer.writerow(cols)
+    for r in rows:
+        writer.writerow([ (r.get(c) if isinstance(r, dict) else "") for c in cols ])
+    data = sio.getvalue()
+    return Response(data, mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename=orders-{device_id}.csv"})
+
+@api_v1_bp.get("/devices/<device_id>/bins")
+@require_role(["admin", "ops", "viewer"]) 
+def device_bins(device_id):
+    return ok(DeviceService.list_bins(device_id))
 
 # Commands
 @api_v1_bp.post("/devices/<device_id>/commands")
@@ -255,6 +297,15 @@ def import_menu(device_id):
 @api_v1_bp.get("/materials")
 @require_role(["admin", "ops", "viewer"]) 
 def materials_list():
+    # optional filters and pagination
+    query = request.args.get('query')
+    unit = request.args.get('unit')
+    tags = request.args.get('tags')
+    status = request.args.get('status')  # active|archived
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 20))
+    if any([query, unit, tags, status, request.args.get('page'), request.args.get('page_size')]):
+        return ok(MaterialService.list(query=query, unit=unit, tags=tags, status=status, page=page, page_size=page_size))
     return ok(MaterialService.list_all())
 
 @api_v1_bp.post("/materials")
@@ -263,6 +314,60 @@ def materials_upsert():
     body = request.json or {}
     code = body.get("code")
     return ok(MaterialService.upsert(code, body))
+
+@api_v1_bp.get("/materials/<code>")
+@require_role(["admin", "ops", "viewer"]) 
+def material_get(code):
+    return ok(MaterialService.get(code))
+
+@api_v1_bp.delete("/materials/<code>")
+@require_role(["admin", "ops"]) 
+def material_delete(code):
+    force = (request.args.get('force') in ('1','true','TRUE','True'))
+    try:
+        return ok(MaterialService.delete(code, force=force))
+    except ValueError as e:
+        if str(e) == 'REFERENCED':
+            return err('REFERENCED', 409)
+        return err(str(e), 400)
+
+@api_v1_bp.get("/materials/<code>/usage")
+@require_role(["admin", "ops", "viewer"]) 
+def material_usage(code):
+    return ok(MaterialService.usage(code))
+
+@api_v1_bp.post("/materials/<code>/replace")
+@require_role(["admin", "ops"]) 
+def material_replace(code):
+    body = request.json or {}
+    to_code = body.get('to_code')
+    scope = body.get('scope','all')
+    try:
+        return ok(MaterialService.replace(code, to_code, scope))
+    except ValueError as e:
+        return err(str(e), 400)
+
+@api_v1_bp.post("/materials/import")
+@require_role(["admin", "ops"]) 
+def materials_import():
+    body = request.json or {}
+    strategy = body.get('strategy', 'merge')
+    payload = body.get('payload')  # list[dict] or csv text
+    dry_run = bool(body.get('dry_run', False))
+    try:
+        return ok(MaterialService.import_payload(strategy, payload, dry_run=dry_run))
+    except ValueError as e:
+        return err(str(e), 400)
+
+@api_v1_bp.get("/materials/export")
+@require_role(["admin", "ops", "viewer"]) 
+def materials_export():
+    fmt = (request.args.get('format') or 'json').lower()
+    codes = request.args.get('codes')
+    codes_list = [c.strip() for c in codes.split(',')] if codes else None
+    content, mime = MaterialService.export(codes_list, fmt=fmt)
+    from flask import Response
+    return Response(content, mimetype=mime, headers={"Content-Disposition": f"attachment; filename=materials.{('csv' if fmt=='csv' else 'json')}"})
 
 # Recipes
 @api_v1_bp.post("/recipes")
@@ -313,6 +418,25 @@ def metrics():
 @require_role(["admin", "ops", "viewer"]) 
 def audit_list():
     return ok(AuditService.list())
+
+# Alarms
+@api_v1_bp.get('/devices/<device_id>/alarms')
+@require_role(["admin", "ops", "viewer"]) 
+def alarms_list(device_id):
+    limit = int(request.args.get('limit', 100))
+    return ok(AlarmService.list(device_id, limit))
+
+@api_v1_bp.patch('/devices/<device_id>/alarms/<alarm_id>/status')
+@require_role(["admin", "ops"]) 
+def alarm_set_status(device_id, alarm_id):
+    body = request.json or {}
+    st = body.get('status')
+    if st not in ('open','acked','closed'):
+        return err('INVALID_ARGUMENT:status', 400)
+    r = AlarmService.set_status(device_id, alarm_id, st)
+    if not r:
+        return err('ALARM_NOT_FOUND', 404)
+    return ok(r)
 
 # Packages
 @api_v1_bp.get("/packages")

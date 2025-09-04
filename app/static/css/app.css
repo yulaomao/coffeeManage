@@ -1,2 +1,4 @@
 body{font-variant-numeric: tabular-nums}
 .list-group-item button{margin-left:4px}
+/* drag & drop visual */
+.drag-over{ outline:2px dashed #0d6efd; border-radius:6px }

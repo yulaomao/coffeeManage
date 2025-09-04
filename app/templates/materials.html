@@ -1,14 +1,215 @@
 {% extends 'layout.html' %}
 {% block content %}
 <h3>物料字典</h3>
-<div class="d-flex mb-2">
-  <button class="btn btn-sm btn-success" onclick="addMat()">新增</button>
+
+<div class="card mb-2"><div class="card-body">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-3">
+      <label class="form-label">搜索</label>
+      <input id="q" class="form-control form-control-sm" placeholder="code/name/tags">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">单位</label>
+      <select id="unit" class="form-select form-select-sm">
+        <option value="">全部</option>
+        <option>g</option>
+        <option>ml</option>
+        <option>pcs</option>
+        <option>other</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-3">
+      <label class="form-label">标签(,分隔)</label>
+      <input id="tags" class="form-control form-control-sm" placeholder="糖,奶">
+    </div>
+    <div class="col-6 col-md-2">
+      <label class="form-label">状态</label>
+      <select id="status" class="form-select form-select-sm">
+        <option value="">全部</option>
+        <option value="active">active</option>
+        <option value="archived">archived</option>
+      </select>
+    </div>
+    <div class="col-6 col-md-2 text-end">
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-success" onclick="openEditor()">新增</button>
+        <button class="btn btn-outline-secondary" onclick="exportAll('json')">导出JSON</button>
+        <button class="btn btn-outline-secondary" onclick="exportAll('csv')">导出CSV</button>
+        <label class="btn btn-outline-primary mb-0">
+          导入
+          <input id="importFile" type="file" hidden accept=".json,.csv" onchange="doImport(this)">
+        </label>
+      </div>
+    </div>
+  </div>
+  <div id="bulkBar" class="mt-2 d-none">
+    <div class="btn-group btn-group-sm">
+      <button class="btn btn-outline-danger" onclick="bulkDelete()">批量删除</button>
+      <button class="btn btn-outline-secondary" onclick="bulkTag()">批量打标签</button>
+      <button class="btn btn-outline-primary" onclick="bulkExport('json')">批量导出JSON</button>
+      <button class="btn btn-outline-primary" onclick="bulkExport('csv')">批量导出CSV</button>
+      <button class="btn btn-outline-dark" onclick="bulkReplace()">批量替换</button>
+    </div>
+  </div>
+</div></div>
+
+<div class="table-responsive">
+  <table class="table table-sm align-middle">
+    <thead>
+      <tr>
+        <th style="width:28px"><input class="form-check-input" type="checkbox" id="chkAll" onclick="toggleAll(this.checked)"></th>
+        <th>物料编码</th>
+        <th>名称</th>
+        <th>单位</th>
+        <th>默认低料阈值%</th>
+        <th>标签</th>
+        <th>使用（配方/料盒）</th>
+        <th>更新时间</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="tb"></tbody>
+  </table>
 </div>
-<ul id="list" class="list-group"></ul>
+<div class="d-flex justify-content-between align-items-center">
+  <div class="small text-muted" id="countText">-</div>
+  <div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="prevPage()">上一页</button>
+    <span class="mx-2" id="pgText">1/1</span>
+    <button class="btn btn-sm btn-outline-secondary" onclick="nextPage()">下一页</button>
+  </div>
+  <div>
+    <select id="pgSize" class="form-select form-select-sm" style="width:auto;display:inline-block" onchange="load(1)">
+      <option>20</option>
+      <option>50</option>
+      <option>100</option>
+    </select>
+  </div>
+</div>
+
 <script>
-const hdr={'X-Role':'admin','Content-Type':'application/json'}
-function load(){fetch('/api/v1/materials',{headers:hdr}).then(r=>r.json()).then(x=>{document.getElementById('list').innerHTML = x.data.map(m=>`<li class='list-group-item'>${m.code}</li>`).join('')})}
-function addMat(){const code=prompt('物料编码','M-01'); if(!code) return; fetch('/api/v1/materials',{method:'POST',headers:hdr,body:JSON.stringify({code, name_i18n:{zh:code}})}).then(load)}
-load()
+const HDR={'X-Role':'admin','Content-Type':'application/json'}
+let curPage=1, total=0, pageSize=20, list=[], selected=new Set(), qTimer=null
+function tsfmt(v){ if(!v) return ''; try{ const n=Number(v); if(!n) return ''; const d=new Date(n*1000); return d.toLocaleString() }catch{return ''} }
+function updateBulk(){ document.getElementById('bulkBar').classList.toggle('d-none', selected.size===0) }
+function toggleAll(on){ document.querySelectorAll('.rowChk').forEach(x=>{ x.checked=on; if(on) selected.add(x.value); else selected.delete(x.value) }); updateBulk() }
+function toggleOne(el){ if(el.checked) selected.add(el.value); else selected.delete(el.value); updateBulk() }
+function debounce(fn, ms){ return function(...a){ clearTimeout(qTimer); qTimer=setTimeout(()=>fn.apply(this,a), ms) } }
+document.getElementById('q').oninput = debounce(()=>load(1), 300)
+document.getElementById('unit').onchange = ()=>load(1)
+document.getElementById('tags').onchange = ()=>load(1)
+document.getElementById('status').onchange = ()=>load(1)
+async function load(page){
+  curPage = page||1; pageSize = Number(document.getElementById('pgSize').value||20)
+  const q = document.getElementById('q').value||''
+  const unit = document.getElementById('unit').value||''
+  const tags = document.getElementById('tags').value||''
+  const status = document.getElementById('status').value||''
+  document.getElementById('tb').innerHTML = `<tr><td colspan="9"><div class="placeholder-glow"><span class="placeholder col-12" style="height:18px;display:block"></span></div></td></tr>`
+  const url = `/api/v1/materials?query=${encodeURIComponent(q)}&unit=${encodeURIComponent(unit)}&tags=${encodeURIComponent(tags)}&status=${encodeURIComponent(status)}&page=${curPage}&page_size=${pageSize}`
+  const j = await fetch(url,{headers:HDR}).then(r=>r.json()); const data=j.data||{items:[],total:0,page:1,page_size:pageSize}; list=data.items||[]; total=data.total||0
+  const tb=document.getElementById('tb'); tb.innerHTML='';
+  for(const m of list){
+    const name = (()=>{ try{ const n=JSON.parse(m.name_i18n_json||'{}'); return n.zh || n.en || m.code }catch{return m.code} })()
+    const thr = m.default_threshold_low_pct!=='' && m.default_threshold_low_pct!=null ? m.default_threshold_low_pct : '-'
+    const tags = m.tags_csv||''
+    const used = `${m.usage_recipes||0}/${m.usage_bins||0}`
+    const tr=document.createElement('tr'); tr.innerHTML = `
+      <td><input class=\"form-check-input rowChk\" type=\"checkbox\" value=\"${m.code}\" onclick=\"toggleOne(this)\"></td>
+      <td class=\"text-monospace\">${m.code}</td>
+      <td>${name}</td>
+      <td>${m.unit||''}</td>
+      <td>${thr}</td>
+      <td>${tags}</td>
+      <td>${used}</td>
+      <td>${tsfmt(m.updated_ts)}</td>
+      <td>
+        <div class=\"btn-group btn-group-sm\">
+          <button class=\"btn btn-outline-secondary\" onclick=\"openEditor('${m.code}')\">编辑</button>
+          <button class=\"btn btn-outline-secondary\" onclick=\"copyMaterial('${m.code}')\">复制</button>
+          <button class=\"btn btn-outline-danger\" onclick=\"delMaterial('${m.code}')\">删除</button>
+          <button class=\"btn btn-outline-primary\" onclick=\"showUsage('${m.code}')\">引用</button>
+        </div>
+      </td>`
+    tb.appendChild(tr)
+  }
+  const pages = Math.max(1, Math.ceil(total/pageSize)); document.getElementById('pgText').innerText = `${curPage}/${pages}`
+  document.getElementById('countText').innerText = `共 ${total} 条`
+}
+function prevPage(){ if(curPage>1) load(curPage-1) }
+function nextPage(){ const pages=Math.max(1, Math.ceil(total/pageSize)); if(curPage<pages) load(curPage+1) }
+
+// Editor Offcanvas
+document.body.insertAdjacentHTML('beforeend',`
+<div class="offcanvas offcanvas-end" tabindex="-1" id="matEditor">
+  <div class="offcanvas-header"><h5 class="offcanvas-title">物料编辑</h5><button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button></div>
+  <div class="offcanvas-body">
+    <div class="mb-2"><label class="form-label">编码</label><input id="meCode" class="form-control" placeholder="M-001"></div>
+    <div class="mb-2"><label class="form-label">名称(zh)</label><input id="meNameZh" class="form-control"></div>
+    <div class="mb-2"><label class="form-label">名称(en)</label><input id="meNameEn" class="form-control"></div>
+    <div class="row g-2">
+      <div class="col-6"><label class="form-label">单位</label><select id="meUnit" class="form-select"><option>g</option><option>ml</option><option>pcs</option><option>other</option></select></div>
+      <div class="col-6"><label class="form-label">默认低料阈值%</label><input id="meThr" class="form-control" placeholder="10"></div>
+    </div>
+    <div class="row g-2 mt-1">
+      <div class="col-6"><label class="form-label">密度(g/ml)</label><input id="meDensity" class="form-control" placeholder=""></div>
+      <div class="col-6"><label class="form-label">标签(,分隔)</label><input id="meTags" class="form-control" placeholder="糖,奶"></div>
+    </div>
+    <div class="mb-2 mt-1"><label class="form-label">图片URL</label><input id="meImg" class="form-control"></div>
+    <div class="mb-2"><label class="form-label">过敏原(,分隔)</label><input id="meAller" class="form-control"></div>
+    <div class="row g-2">
+      <div class="col-6"><label class="form-label">保质期(天)</label><input id="meShelf" class="form-control"></div>
+      <div class="col-6"><label class="form-label">状态</label><select id="meActive" class="form-select"><option value="1">active</option><option value="0">archived</option></select></div>
+    </div>
+    <div class="mb-2 mt-1"><label class="form-label">备注</label><textarea id="meNotes" class="form-control" rows="3"></textarea></div>
+    <div class="text-end"><button class="btn btn-primary" onclick="saveMaterial()">保存</button></div>
+  </div>
+</div>`)
+let editor=null; let editCode=null
+function openEditor(code){ editCode = code||null; if(!editor){ editor=new bootstrap.Offcanvas('#matEditor') }
+  if(code){ fetch(`/api/v1/materials/${code}`,{headers:HDR}).then(r=>r.json()).then(x=>{ const m=x.data||{}; const n=JSON.parse(m.name_i18n_json||'{}');
+    document.getElementById('meCode').value=m.code||''; document.getElementById('meCode').disabled=true;
+    document.getElementById('meNameZh').value=n.zh||''; document.getElementById('meNameEn').value=n.en||'';
+    document.getElementById('meUnit').value=m.unit||'g'; document.getElementById('meThr').value=m.default_threshold_low_pct||''; document.getElementById('meDensity').value=m.density||''; document.getElementById('meTags').value=m.tags_csv||'';
+    const meta=JSON.parse(m.meta_json||'{}'); document.getElementById('meImg').value=meta.image_url||''; document.getElementById('meAller').value=meta.allergens_csv||''; document.getElementById('meShelf').value=meta.shelf_life_days||''; document.getElementById('meNotes').value=meta.notes||''; document.getElementById('meActive').value=(m.active==='1'?'1':'0'); editor.show() })
+  } else {
+    ['meCode','meNameZh','meNameEn','meUnit','meThr','meDensity','meTags','meImg','meAller','meShelf','meNotes'].forEach(id=>document.getElementById(id).value=''); document.getElementById('meActive').value='1'; document.getElementById('meCode').disabled=false; editor.show()
+  }
+}
+function saveMaterial(){ const code=document.getElementById('meCode').value.trim(); if(!code){ return alert('编码必填') }
+  const body={ code, name_i18n:{ zh: document.getElementById('meNameZh').value.trim() || code, en: document.getElementById('meNameEn').value.trim() }, unit: document.getElementById('meUnit').value, default_threshold_low_pct: document.getElementById('meThr').value.trim(), density: document.getElementById('meDensity').value.trim(), tags: document.getElementById('meTags').value.trim(), image_url: document.getElementById('meImg').value.trim(), allergens_csv: document.getElementById('meAller').value.trim(), shelf_life_days: document.getElementById('meShelf').value.trim(), notes: document.getElementById('meNotes').value.trim(), active: document.getElementById('meActive').value==='1' }
+  fetch('/api/v1/materials',{method:'POST',headers:HDR,body:JSON.stringify(body)}).then(r=>r.json()).then(x=>{ if(x.ok){ cmToast('已保存','success'); editor.hide(); load(1) } else { alert('保存失败: '+x.error) } }) }
+function copyMaterial(code){ fetch(`/api/v1/materials/${code}`,{headers:HDR}).then(r=>r.json()).then(x=>{ const m=x.data||{}; openEditor(); document.getElementById('meCode').value = (m.code||'')+'-copy' }) }
+async function delMaterial(code){ const ju = await fetch(`/api/v1/materials/${code}/usage`,{headers:HDR}).then(r=>r.json()); const u=ju.data||{recipes:[],bins:[]}; if((u.recipes||[]).length || (u.bins||[]).length){ const to=prompt(`物料 ${code} 有引用，输入替换为的编码进行迁移(或取消)`); if(!to) return; const res=await fetch(`/api/v1/materials/${code}/replace`,{method:'POST',headers:HDR,body:JSON.stringify({to_code:to,scope:'all'})}).then(r=>r.json()); if(!res.ok){ return alert('替换失败: '+res.error) } }
+  if(!confirm('确认删除物料 '+code+' ?')) return; const j = await fetch(`/api/v1/materials/${code}`,{method:'DELETE',headers:HDR}).then(r=>r.json()); if(j.ok){ cmToast('已删除','success'); load(1) } else { if(j.error==='REFERENCED'){ alert('该物料仍被引用，已阻止删除'); } else { alert('删除失败: '+j.error) } } }
+
+// Usage modal
+document.body.insertAdjacentHTML('beforeend',`
+<div class="modal" id="usageModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
+  <div class="modal-header"><h5 class="modal-title">引用详情</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+  <div class="modal-body">
+    <div class="row g-2">
+      <div class="col-12 col-lg-6"><div class="card"><div class="card-body"><div class="text-secondary">配方引用</div><ul id="uRecipes" class="list-group list-group-flush"></ul></div></div></div>
+      <div class="col-12 col-lg-6"><div class="card"><div class="card-body"><div class="text-secondary">设备料盒</div><ul id="uBins" class="list-group list-group-flush"></ul></div></div></div>
+    </div>
+  </div>
+  <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">关闭</button></div>
+</div></div></div>`)
+let usageModal=null
+async function showUsage(code){ const j = await fetch(`/api/v1/materials/${code}/usage`,{headers:HDR}).then(r=>r.json()); const d=j.data||{recipes:[],bins:[]}; const ur=document.getElementById('uRecipes'); ur.innerHTML=(d.recipes||[]).map(r=>`<li class='list-group-item d-flex justify-content-between'><span>${r.id} - ${r.name||''}</span><a class='btn btn-sm btn-outline-primary' href='/recipes' target='_blank'>前往</a></li>`).join('')||'<li class="list-group-item">无</li>'; const ub=document.getElementById('uBins'); ub.innerHTML=(d.bins||[]).map(b=>`<li class='list-group-item d-flex justify-content-between'><span>${b.device_id} #${b.bin_index} (${b.remaining||'-'}/${b.capacity||'-'} ${b.unit||''}) ${b.low?'[低料]':''}</span><a class='btn btn-sm btn-outline-primary' href='/devices/${b.device_id}' target='_blank'>前往</a></li>`).join('')||'<li class="list-group-item">无</li>'; if(!usageModal){ usageModal=new bootstrap.Modal('#usageModal') } usageModal.show() }
+
+// Import/Export
+async function exportAll(fmt){ const resp = await fetch(`/api/v1/materials/export?format=${fmt}`,{headers:HDR}); const blob = await resp.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`materials.${fmt==='csv'?'csv':'json'}`; a.click(); URL.revokeObjectURL(a.href) }
+async function bulkExport(fmt){ const codes=[...selected]; if(!codes.length){ return cmToast('未选择','error') } const resp = await fetch(`/api/v1/materials/export?format=${fmt}&codes=${codes.join(',')}`,{headers:HDR}); const blob = await resp.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`materials-selected.${fmt==='csv'?'csv':'json'}`; a.click(); URL.revokeObjectURL(a.href) }
+function doImport(input){ const file = input.files && input.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = async ()=>{ try{ const text=reader.result; let payload; if(file.name.endsWith('.json')){ payload = JSON.parse(text) } else { payload = String(text) } // dry-run
+    const report = await fetch('/api/v1/materials/import',{method:'POST',headers:HDR,body:JSON.stringify({strategy:'merge',payload,dry_run:true})}).then(r=>r.json()); if(!report.ok){ return alert('预检失败: '+report.error) } const r=report.data.report; if(!confirm(`预检: 新增${r.to_create} 更新${r.to_update} 冲突${r.conflicts.length} 错误${r.errors.length}，是否执行？`)) { return } const exec = await fetch('/api/v1/materials/import',{method:'POST',headers:HDR,body:JSON.stringify({strategy:'merge',payload,dry_run:false})}).then(r=>r.json()); if(exec.ok){ cmToast('导入完成','success'); load(1) } else { alert('导入失败: '+exec.error) } }catch(e){ alert('文件解析失败') } input.value='' } ; reader.readAsText(file) }
+
+// Bulk ops
+async function bulkDelete(){ const codes=[...selected]; if(!codes.length) return; if(!confirm('确认删除所选 '+codes.length+' 项?')) return; for(const c of codes){ const ju = await fetch(`/api/v1/materials/${c}/usage`,{headers:HDR}).then(r=>r.json()); const u=ju.data||{recipes:[],bins:[]}; if((u.recipes||[]).length||(u.bins||[]).length){ cmToast(`已阻止 ${c} 删除(存在引用)`, 'error'); continue } await fetch(`/api/v1/materials/${c}`,{method:'DELETE',headers:HDR}); } cmToast('批量删除完成','success'); selected.clear(); load(curPage) }
+async function bulkTag(){ const codes=[...selected]; if(!codes.length) return; const tag=prompt('追加标签(,分隔)'); if(tag===null) return; for(const c of codes){ const j = await fetch(`/api/v1/materials/${c}`,{headers:HDR}).then(r=>r.json()); const m=j.data||{}; const tags = ((m.tags_csv||'')+','+tag).split(',').map(x=>x.trim()).filter(Boolean).join(','); await fetch('/api/v1/materials',{method:'POST',headers:HDR,body:JSON.stringify({code:c, name_i18n: JSON.parse(m.name_i18n_json||'{}'), unit:m.unit, default_threshold_low_pct:m.default_threshold_low_pct, density:m.density, tags, active: m.active==='1', image_url: JSON.parse(m.meta_json||'{}').image_url, allergens_csv: JSON.parse(m.meta_json||'{}').allergens_csv, shelf_life_days: JSON.parse(m.meta_json||'{}').shelf_life_days, notes: JSON.parse(m.meta_json||'{}').notes })}) }
+  cmToast('批量打标完成','success'); load(curPage) }
+async function bulkReplace(){ const codes=[...selected]; if(!codes.length) return; const to=prompt('替换为编码(to_code)'); if(!to) return; for(const c of codes){ const res = await fetch(`/api/v1/materials/${c}/replace`,{method:'POST',headers:HDR,body:JSON.stringify({to_code:to,scope:'all'})}).then(r=>r.json()); if(!res.ok){ cmToast(`替换 ${c} 失败: ${res.error}`,'error') } } cmToast('批量替换完成','success'); load(curPage) }
+
+load(1)
 </script>
 {% endblock %}
