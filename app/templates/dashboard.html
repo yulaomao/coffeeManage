@@ -1,8 +1,41 @@
 {% extends 'layout.html' %}
 {% block content %}
-<h3 class="mb-3">仪表盘</h3>
+<div class="position-sticky top-0 pb-2" style="z-index:100;">
+  <div class="d-flex align-items-center gap-3 pt-2">
+    <h4 class="mb-0">仪表盘</h4>
+    <div class="ms-auto d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" onclick="exportSummary()" aria-label="导出指标">导出</button>
+      <a class="btn btn-sm btn-outline-secondary" href="/orders" aria-label="前往订单">订单</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/dispatch" aria-label="前往下发中心">下发中心</a>
+      <a class="btn btn-sm btn-outline-secondary" href="/devices" aria-label="前往设备">设备</a>
+      <a class="btn btn-sm btn-outline-secondary" href="#" onclick="cmUI.toast('文档建设中','info')" aria-label="帮助">帮助</a>
+    </div>
+  </div>
+  <div class="filterbar mt-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-4">
+        <label class="form-label">时间范围</label>
+        <div class="d-flex gap-2 flex-wrap">
+          <div class="btn-group btn-group-sm" role="group" aria-label="快捷时间">
+            <button id="btnToday" class="btn btn-outline-secondary" onclick="setRange('today')">Today</button>
+            <button id="btn7d" class="btn btn-outline-secondary" onclick="setRange('7d')">7d</button>
+            <button id="btn30d" class="btn btn-outline-secondary" onclick="setRange('30d')">30d</button>
+          </div>
+          <div class="input-group input-group-sm" style="max-width:360px">
+            <span class="input-group-text">From</span>
+            <input id="fltFrom" class="form-control" placeholder="Unix 秒">
+            <span class="input-group-text">To</span>
+            <input id="fltTo" class="form-control" placeholder="Unix 秒">
+          </div>
+          <button class="btn btn-sm btn-primary ms-auto" onclick="reloadAll()">查询</button>
+          <button class="btn btn-sm btn-outline-secondary" onclick="resetRange()">重置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
-<div id="dash-alert" class="alert alert-info d-none">加载中…</div>
+<div id="dash-alert" class="alert alert-info d-none mt-2">加载中…</div>
 <div id="dash-error" class="alert alert-danger d-none"></div>
 
 <div class="row g-3">
@@ -40,8 +73,8 @@
         <div class="d-flex align-items-center">
           <div class="me-3 text-warning"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg></div>
           <div>
-            <div class="text-secondary">今日销量</div>
-            <div class="fs-4 fw-semibold" id="kpi-sales">-</div>
+            <div class="text-secondary">今日订单</div>
+            <div class="fs-4 fw-semibold" id="kpi-orders">-</div>
           </div>
         </div>
       </div>
@@ -56,6 +89,48 @@
           <div>
             <div class="text-secondary">开放告警</div>
             <div class="fs-4 fw-semibold" id="kpi-alarms">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-sm-6 col-lg-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3 text-success"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4a8 8 0 1 0 8 8h-2a6 6 0 1 1-6-6V4z"/></svg></div>
+          <div>
+            <div class="text-secondary">今日营收(元)</div>
+            <div class="fs-4 fw-semibold" id="kpi-revenue">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-sm-6 col-lg-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3 text-info"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12l5 5L20 7"/></svg></div>
+          <div>
+            <div class="text-secondary">成功率</div>
+            <div class="fs-4 fw-semibold" id="kpi-succ">-</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-sm-6 col-lg-3">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="d-flex align-items-center">
+          <div class="me-3 text-primary"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v2H4zm0 6h16v2H4zm0 6h10v2H4z"/></svg></div>
+          <div>
+            <div class="text-secondary">下发批次(活动)</div>
+            <div class="fs-4 fw-semibold" id="kpi-batches">-</div>
           </div>
         </div>
       </div>
@@ -95,7 +170,7 @@
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <div class="text-secondary">近7日销量</div>
+          <div class="text-secondary">订单趋势</div>
           <small class="text-muted" id="sales-sum">-</small>
         </div>
         <canvas id="chart-sales" height="120"></canvas>
@@ -105,7 +180,7 @@
   <div class="col-12 col-lg-4">
     <div class="card shadow-sm mb-3">
       <div class="card-body">
-        <div class="text-secondary mb-2">活跃设备（近7天）</div>
+        <div class="text-secondary mb-2">活跃设备</div>
         <canvas id="chart-active" height="120"></canvas>
       </div>
     </div>
@@ -123,12 +198,24 @@
   <div class="col-12">
     <div class="card shadow-sm">
       <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <div class="text-secondary">低料设备详情</div>
-          <a class="small text-decoration-none" href="/devices">前往设备列表</a>
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div class="text-secondary">最近下发批次</div>
+              <a class="small text-decoration-none" href="/dispatch">前往下发中心</a>
+            </div>
+            <div id="batch-empty" class="text-muted d-none">暂无批次，去下发中心创建。</div>
+            <div id="batch-list" class="list-group list-group-flush"></div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <div class="text-secondary">低料设备详情</div>
+              <a class="small text-decoration-none" href="/devices">前往设备列表</a>
+            </div>
+            <div id="low-empty" class="text-muted d-none">全部设备料仓充足，无低料告警。</div>
+            <div id="low-list" class="list-group list-group-flush"></div>
+          </div>
         </div>
-        <div id="low-empty" class="text-muted d-none">全部设备料仓充足，无低料告警。</div>
-        <div id="low-list" class="list-group list-group-flush"></div>
       </div>
     </div>
   </div>
@@ -139,6 +226,19 @@
 <script>
 const hdr={'X-Role':'admin'}
 const $=(id)=>document.getElementById(id)
+let curRange='7d'
+function setRange(r){ curRange=r; ['btnToday','btn7d','btn30d'].forEach(id=>$(id).classList.remove('active')); if(r==='today') $('btnToday').classList.add('active'); if(r==='7d') $('btn7d').classList.add('active'); if(r==='30d') $('btn30d').classList.add('active'); applyRangeInputs(); reloadAll() }
+function resetRange(){ curRange='7d'; $('fltFrom').value=''; $('fltTo').value=''; setRange('7d') }
+function getRange(){
+  const now=Math.floor(Date.now()/1000)
+  const fromInp = ( $('fltFrom').value||'' ).trim(); const toInp=( $('fltTo').value||'' ).trim()
+  if(fromInp && toInp){ return {from:Number(fromInp), to:Number(toInp)} }
+  if(curRange==='today'){ const d=new Date(); d.setHours(0,0,0,0); return {from:Math.floor(d.getTime()/1000), to:now} }
+  if(curRange==='30d'){ return {from:now-30*86400, to:now} }
+  return {from:now-7*86400, to:now}
+}
+function applyRangeInputs(){ const r=getRange(); $('fltFrom').value=String(r.from); $('fltTo').value=String(r.to) }
+function reloadAll(){ load(); loadTrends(); loadLow(); loadBatches(); loadOrdersKPI() }
 function showLoading(flag){
   $('dash-alert').classList.toggle('d-none', !flag)
 }
@@ -155,7 +255,7 @@ async function load(){
     const rate = Number(d.online_rate||0)
     $('kpi-online').style.width = rate+'%'
     $('kpi-online-text').innerText = isNaN(rate)?'-':(rate+'%')
-    $('kpi-sales').innerText = d.sales_today ?? '-'
+  // 今日订单/营收/成功率 由订单统计填充
     $('kpi-alarms').innerText = d.alarms_open ?? '-'
     $('kpi-low').innerText = d.low_material_devices ?? '-'
     $('kpi-cmd').innerText = d.pending_commands_count ?? '-'
@@ -168,7 +268,8 @@ async function load(){
 }
 async function loadTrends(){
   try{
-    const r = await fetch('/api/v1/dashboard/trends?days=7',{headers:hdr});
+  const days = (curRange==='today')?1: (curRange==='30d'?30:7)
+  const r = await fetch('/api/v1/dashboard/trends?days='+days,{headers:hdr});
     const j = await r.json(); const t=j.data||{};
     const labels=t.days||[]; const sales=t.sales||[]; const active=t.active_devices||[];
     $('sales-sum').innerText = '合计：'+(sales.reduce((a,b)=>a+b,0)||0)
@@ -211,6 +312,40 @@ async function loadLow(){
     }
   }catch(e){ /* non-blocking */ }
 }
-load(); loadTrends(); loadLow();
+async function loadOrdersKPI(){
+  try{
+    const r = getRange();
+    const qs = new URLSearchParams({ from:String(r.from), to:String(r.to) })
+    const j = await fetch('/api/v1/orders/stats?'+qs.toString(),{headers:hdr}).then(x=>x.json())
+    const s = j.data||{}
+    $('kpi-orders').innerText = s.total ?? '-'
+    $('kpi-revenue').innerText = (s.revenue!=null? s.revenue : '-')
+    $('kpi-succ').innerText = (s.success_rate!=null? (s.success_rate+'%') : '-')
+  }catch{ /* ignore */ }
+}
+async function loadBatches(){
+  try{
+    // 活动批次（队列中 + 暂停视为活动）
+    const d1 = await fetch('/api/v1/commands/batches?page=1&page_size=1&status=queued',{headers:hdr}).then(r=>r.json()).then(x=>x.data||{})
+    const activeCount = (d1.total||0)
+    $('kpi-batches').innerText = activeCount
+    const d2 = await fetch('/api/v1/commands/batches?page=1&page_size=5',{headers:hdr}).then(r=>r.json()).then(x=>x.data||{})
+    const list = d2.items||[]
+    const wrap=$('batch-list'); wrap.innerHTML=''
+    if(!list.length){ $('batch-empty').classList.remove('d-none'); return }
+    $('batch-empty').classList.add('d-none')
+    for(const b of list){
+      const id=b.id||b.batch_id; const cntT=b.count_total||0; const s=(b.count_success||0), f=(b.count_fail||0), p=(b.count_pending||0)
+      const a=document.createElement('a'); a.className='list-group-item list-group-item-action'; a.href='/dispatch/'+id
+      a.innerHTML = `<div class='d-flex justify-content-between'><div class='fw-semibold'>${b.type||''} <span class='text-muted'>${id}</span></div><small class='text-muted'>${fmtTime(b.created_ts)}</small></div>
+        <div class='small mt-1'>T:${cntT} <span class='text-success'>S:${s}</span> <span class='text-danger'>F:${f}</span> <span class='text-primary'>P:${p}</span></div>`
+      wrap.appendChild(a)
+    }
+  }catch{ /* ignore */ }
+}
+function fmtTime(s){ if(!s) return ''; const d=new Date(parseInt(s)*1000); return d.toLocaleString() }
+
+// init
+setRange('7d')
 </script>
 {% endblock %}
